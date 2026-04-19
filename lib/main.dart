@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb; // 🔥 استيراد مهم جداً لفحص بيئة الويب
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
-// 🔥 تم فك التعليق: الآن التطبيق يستدعي شاشاتك الحقيقية التي برمجناها
 import 'screens/shared/login_screen.dart';
 import 'screens/admin/admin_dashboard_screen.dart';
+import 'screens/admin/admin_web_dashboard.dart'; // 🔥 استيراد لوحة تحكم الويب المخصصة
 import 'screens/driver/driver_dashboard_screen.dart';
 import 'screens/customer/customer_dashboard_screen.dart';
 
@@ -27,9 +28,13 @@ void main() async {
       Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
       String role = decodedToken['role'] ?? '';
 
-      // توجيه المستخدم حسب دوره في النظام للشاشات الحقيقية المليئة بالميزات
+      // 🔥 التوجيه الذكي عند فتح التطبيق (أو عمل Refresh) والمستخدم مسجل دخوله بالفعل
       if (role == 'admin') {
-        defaultHome = const AdminDashboardScreen();
+        if (kIsWeb) {
+          defaultHome = const AdminWebDashboard(); // 💻 توجيه للوحة الويب الكاملة
+        } else {
+          defaultHome = const AdminDashboardScreen(); // 📱 توجيه لشاشة الهاتف
+        }
       } else if (role == 'driver' || role == 'collector') {
         defaultHome = const DriverDashboardScreen();
       } else if (role == 'customer') {
@@ -50,7 +55,7 @@ void main() async {
 class DanteTraceApp extends StatelessWidget {
   final Widget homeScreen;
 
-  const DanteTraceApp({Key? key, required this.homeScreen}) : super(key: key);
+  const DanteTraceApp({super.key, required this.homeScreen});
 
   @override
   Widget build(BuildContext context) {
@@ -87,5 +92,3 @@ class DanteTraceApp extends StatelessWidget {
     );
   }
 }
-
-// 💥 ملاحظة: لقد قمت بحذف الشاشات الوهمية من هنا نهائياً!
