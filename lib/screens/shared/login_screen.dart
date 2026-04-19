@@ -44,7 +44,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
   // 🔐 أدوات التشفير والبصمة
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
-  final LocalAuthentication _localAuth = LocalAuthentication();
+  
+  // 🔥 حماية الويب: جعلنا البصمة Nullable لكي لا ينهار المتصفح
+  final LocalAuthentication? _localAuth = kIsWeb ? null : LocalAuthentication();
   
   // قائمة الحسابات المحفوظة
   Map<String, dynamic> _savedAccounts = {};
@@ -73,25 +75,37 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   // 1. إدارة الحسابات في الذاكرة الآمنة
   // ==========================================
   Future<void> _loadSavedAccounts() async {
-    String? accountsJson = await _secureStorage.read(key: 'saved_accounts');
-    if (accountsJson != null) {
-      setState(() => _savedAccounts = jsonDecode(accountsJson));
+    try {
+      String? accountsJson = await _secureStorage.read(key: 'saved_accounts');
+      if (accountsJson != null) {
+        setState(() => _savedAccounts = jsonDecode(accountsJson));
+      }
+    } catch (e) {
+      debugPrint("Secure Storage not fully supported on this web browser, skipping.");
     }
   }
 
   Future<void> _saveAccountToSecureStorage(String username, String password) async {
-    _savedAccounts[username] = password;
-    await _secureStorage.write(key: 'saved_accounts', value: jsonEncode(_savedAccounts));
+    try {
+      _savedAccounts[username] = password;
+      await _secureStorage.write(key: 'saved_accounts', value: jsonEncode(_savedAccounts));
+    } catch (e) {
+      debugPrint("Skipping secure storage save on web");
+    }
   }
 
-  // 🔥 ميزة الـ Pro: حذف حساب من القائمة
   Future<void> _removeSavedAccount(String username) async {
-    HapticFeedback.mediumImpact(); // نبضة اهتزاز
+    if (!kIsWeb) HapticFeedback.mediumImpact(); 
     setState(() => _savedAccounts.remove(username));
-    await _secureStorage.write(key: 'saved_accounts', value: jsonEncode(_savedAccounts));
+    
+    try {
+      await _secureStorage.write(key: 'saved_accounts', value: jsonEncode(_savedAccounts));
+    } catch (e) {
+      debugPrint("Skipping secure storage update on web");
+    }
     
     if (_savedAccounts.isEmpty && Navigator.canPop(context)) {
-      Navigator.pop(context); // إغلاق النافذة إذا حذفت كل شيء
+      Navigator.pop(context); 
     }
   }
 
@@ -99,21 +113,28 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   // 2. التحقق بالبصمة (Pro Mode)
   // ==========================================
   Future<void> _authenticateAndFill(String username, String password) async {
-    HapticFeedback.lightImpact();
+    if (!kIsWeb) HapticFeedback.lightImpact();
+    
+    // 🔥 حماية قوية: تخطي البصمة فوراً إذا كنا على الويب
+    if (kIsWeb || _localAuth == null) {
+      _fillDataAndLogin(username, password);
+      return;
+    }
+
     try {
-      bool canCheck = await _localAuth.canCheckBiometrics || await _localAuth.isDeviceSupported();
+      bool canCheck = await _localAuth!.canCheckBiometrics || await _localAuth!.isDeviceSupported();
 
       if (!canCheck) {
         _fillDataAndLogin(username, password);
         return;
       }
 
-      bool didAuthenticate = await _localAuth.authenticate(
+      bool didAuthenticate = await _localAuth!.authenticate(
         localizedReason: 'تأكيد الهوية للدخول كـ $username',
       );
 
       if (didAuthenticate) {
-        HapticFeedback.heavyImpact(); // اهتزاز النجاح
+        HapticFeedback.heavyImpact(); 
         _fillDataAndLogin(username, password);
       }
     } catch (e) {
@@ -139,70 +160,75 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   // ==========================================
   void _showSavedAccountsSheet() {
     if (_savedAccounts.isEmpty) return;
-    HapticFeedback.selectionClick();
+    if (!kIsWeb) HapticFeedback.selectionClick();
 
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        return StatefulBuilder( // لدعم تحديث الحالة داخل الـ BottomSheet
+        return StatefulBuilder( 
           builder: (context, setSheetState) {
-            return Container(
-              padding: const EdgeInsets.all(20),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10))),
-                  const SizedBox(height: 20),
-                  Text("الحسابات المحفوظة", style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold, color: darkColor)),
-                  Text("اسحب لليسار لحذف الحساب", style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey)),
-                  const SizedBox(height: 15),
-                  Expanded(
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: _savedAccounts.keys.length,
-                      itemBuilder: (context, index) {
-                        String user = _savedAccounts.keys.elementAt(index);
-                        String pass = _savedAccounts[user];
-                        return Dismissible( // 🔥 ميزة السحب للحذف
-                          key: Key(user),
-                          direction: DismissDirection.endToStart,
-                          onDismissed: (direction) {
-                            _removeSavedAccount(user);
-                            setSheetState(() {}); 
-                          },
-                          background: Container(
-                            alignment: Alignment.centerRight,
-                            padding: const EdgeInsets.only(right: 20),
-                            decoration: BoxDecoration(color: Colors.red.shade100, borderRadius: BorderRadius.circular(12)),
-                            child: const Icon(Icons.delete_outline, color: Colors.red),
-                          ),
-                          child: Card(
-                            elevation: 0,
-                            color: softBg,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12), 
-                              side: BorderSide(color: Colors.grey.shade200)
-                            ),
-                            child: ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: primaryColor.withOpacity(0.1),
-                                child: Icon(Icons.person, color: primaryColor),
-                              ),
-                              title: Text(user, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-                              trailing: Icon(Icons.fingerprint, color: primaryColor),
-                              onTap: () => _authenticateAndFill(user, pass),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+            return Center( 
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 500),
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
                   ),
-                ],
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10))),
+                      const SizedBox(height: 20),
+                      Text("الحسابات المحفوظة", style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold, color: darkColor)),
+                      Text("اسحب لليسار لحذف الحساب", style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey)),
+                      const SizedBox(height: 15),
+                      Expanded(
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: _savedAccounts.keys.length,
+                          itemBuilder: (context, index) {
+                            String user = _savedAccounts.keys.elementAt(index);
+                            String pass = _savedAccounts[user];
+                            return Dismissible( 
+                              key: Key(user),
+                              direction: DismissDirection.endToStart,
+                              onDismissed: (direction) {
+                                _removeSavedAccount(user);
+                                setSheetState(() {}); 
+                              },
+                              background: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.only(right: 20),
+                                decoration: BoxDecoration(color: Colors.red.shade100, borderRadius: BorderRadius.circular(12)),
+                                child: const Icon(Icons.delete_outline, color: Colors.red),
+                              ),
+                              child: Card(
+                                elevation: 0,
+                                color: softBg,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12), 
+                                  side: BorderSide(color: Colors.grey.shade200)
+                                ),
+                                child: ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: primaryColor.withOpacity(0.1),
+                                    child: Icon(Icons.person, color: primaryColor),
+                                  ),
+                                  title: Text(user, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+                                  trailing: Icon(kIsWeb ? Icons.login_rounded : Icons.fingerprint, color: primaryColor),
+                                  onTap: () => _authenticateAndFill(user, pass),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             );
           }
@@ -221,7 +247,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     FocusScope.of(context).unfocus();
 
     if (username.isEmpty || password.isEmpty) {
-      HapticFeedback.vibrate();
+      if (!kIsWeb) HapticFeedback.vibrate();
       _showSnackBar('يرجى ملء جميع الحقول المطلوبة', Colors.orange.shade800, Icons.warning_rounded);
       return;
     }
@@ -243,7 +269,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         await prefs.setString('username', username);
         if (role != null) await prefs.setString('role', role);
 
-        HapticFeedback.heavyImpact(); // اهتزاز الدخول الناجح
+        if (!kIsWeb) HapticFeedback.heavyImpact();
 
         if (!mounted) return;
         setState(() => _isLoading = false);
@@ -272,13 +298,13 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         }
 
       } else {
-        HapticFeedback.vibrate(); // اهتزاز الخطأ
+        if (!kIsWeb) HapticFeedback.vibrate(); 
         setState(() => _isLoading = false);
         _showSnackBar('بيانات الدخول غير صحيحة', Colors.red.shade800, Icons.error_outline_rounded);
       }
     } catch (e) {
       if (!mounted) return;
-      HapticFeedback.vibrate();
+      if (!kIsWeb) HapticFeedback.vibrate();
       setState(() => _isLoading = false);
       _showSnackBar('تعذر الاتصال بالخادم. تحقق من الإنترنت.', Colors.red.shade800, Icons.wifi_off_rounded);
     }
@@ -357,7 +383,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           decoration: BoxDecoration(
             gradient: LinearGradient(colors: [primaryColor, const Color(0xFF991B1B)], begin: Alignment.topLeft, end: Alignment.bottomRight),
             borderRadius: isDesktop 
-              ? BorderRadius.circular(30) // حواف دائرية كاملة في الويب
+              ? BorderRadius.circular(30) 
               : const BorderRadius.only(bottomLeft: Radius.circular(50), bottomRight: Radius.circular(50)),
             boxShadow: [BoxShadow(color: primaryColor.withOpacity(0.3), blurRadius: 20, offset: const Offset(0, 10))],
           ),
@@ -432,7 +458,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                 icon: Icons.lock_outline_rounded, 
                 isPassword: true,
                 action: TextInputAction.done,
-                onSubmitted: (_) => _handleLogin(), // الدخول تلقائياً عند ضغط "تم" في الكيبورد
+                onSubmitted: (_) => _handleLogin(), 
               ),
               const SizedBox(height: 35),
               
@@ -441,7 +467,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                 height: 55,
                 child: ElevatedButton(
                   onPressed: _isLoading ? null : () {
-                    HapticFeedback.lightImpact();
+                    if (!kIsWeb) HapticFeedback.lightImpact();
                     _handleLogin();
                   },
                   style: ElevatedButton.styleFrom(
@@ -491,7 +517,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           ? IconButton(
               icon: Icon(_obscurePassword ? Icons.visibility_off_rounded : Icons.visibility_rounded, color: Colors.grey.shade400, size: 20), 
               onPressed: () {
-                HapticFeedback.selectionClick();
+                if (!kIsWeb) HapticFeedback.selectionClick();
                 setState(() => _obscurePassword = !_obscurePassword);
               }
             ) 
