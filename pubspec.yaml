@@ -1,0 +1,78 @@
+name: dante_trace_mobile
+description: "نظام Dante Trace لتتبع الأصول الصناعية واللوجستية باستخدام تقنيات NFC والذكاء الاصطناعي."
+
+publish_to: 'none'
+
+version: 1.2.0+3
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 🔥 إضافة مكتبة اللغات في مكانها الصحيح
+  flutter_localizations:
+    sdk: flutter
+  
+  # 🎨 الأيقونات والتصميم والواجهات
+  cupertino_icons: ^1.0.8
+  google_fonts: ^8.0.2
+  badges: ^3.1.2
+  shimmer: ^3.0.0
+  
+  # 💳 المحرك الرئيسي لـ NFC
+  nfc_manager: ^4.1.1
+  
+  # 🌐 بروتوكول الاتصال والتوجيه والروابط
+  http: ^1.6.0
+  web_socket_channel: ^3.0.3
+  url_launcher: ^6.3.2
+  share_plus: ^7.2.1
+  
+  # 💾 ذاكرة التخزين المحلية
+  shared_preferences: ^2.5.4
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  
+  # 🔐 فك التشفير والأمان
+  jwt_decoder: ^2.0.1
+
+  # ⏱️ التنسيق والوقت
+  intl: ^0.20.2 
+  
+  # 📍 أدوات النظام والموقع
+  connectivity_plus: ^7.0.0
+  geolocator: ^14.0.2
+
+  # 🖨️ محركات استخراج وطباعة الفواتير و الملفات (PDF & Printing)
+  pdf: ^3.12.0
+  printing: ^5.14.3
+  path_provider: ^2.1.2
+  flutter_secure_storage: ^10.0.0
+  local_auth: ^3.0.1
+  table_calendar: ^3.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.13.1
+
+# 🔥 إعدادات أيقونة التطبيق
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/logo.png"
+  min_sdk_android: 21 
+  adaptive_icon_background: "#ffffff"
+  adaptive_icon_foreground: "assets/images/logo.png"
+
+flutter:
+  uses-material-design: true
+
+  # 🖋️ تفعيل الملفات الخارجية (الصور والخطوط)
+  assets:
+    - assets/fonts/Cairo-Regular.ttf
+    - assets/fonts/Cairo-Bold.ttf
+    - assets/images/logo.png
