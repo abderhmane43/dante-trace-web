@@ -18,8 +18,8 @@ import '../../widgets/shared/order_timeline_widget.dart';
 import '../../widgets/admin/shipment_journey_timeline.dart';
 import '../../widgets/admin/driver_profile_sheet.dart'; 
 import '../../widgets/admin/advanced_split_dialog.dart'; 
-
 import '../../widgets/admin/verify_payment_dialog.dart';
+import '../../widgets/master_pin_dialog.dart'; // 🔥 استيراد نافذة كود المدير السري
 
 import 'master_tracking_screen.dart'; 
 import 'add_user_screen.dart'; 
@@ -235,6 +235,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     }
   }
 
+  // 🔥 الدالة المحدثة: نافذة الحارس لحذف الطلبيات
   Future<void> _deleteOrderDialog(int id, String trackingNumber, bool isMasterHasBranches) async {
     showDialog(
       context: context,
@@ -258,25 +259,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
             onPressed: () async {
-              Navigator.pop(ctx);
-              setState(() => _isLoading = true);
-              try {
-                final prefs = await SharedPreferences.getInstance();
-                final token = prefs.getString('auth_token') ?? '';
-                final response = await http.delete(
-                  Uri.parse('${ApiService.baseUrl}/admin/shipments/$id'),
-                  headers: {'Authorization': 'Bearer $token'},
-                );
-                if (response.statusCode == 200) {
-                  _triggerSnackBar("✅ تم حذف الطلبية وتحديث البيانات بنجاح");
+              Navigator.pop(ctx); // إغلاق نافذة التأكيد العادية
+              
+              // 🔥 فتح نافذة الحارس (الرمز السري)
+              String? pin = await MasterPinDialog.show(context);
+              
+              if (pin != null && pin.isNotEmpty) {
+                setState(() => _isLoading = true);
+                
+                // إرسال طلب الحذف للسيرفر مرفقاً بكود المدير
+                final result = await ApiService.deleteShipment(id, pin);
+                
+                if (result['success'] == true) {
+                  _triggerSnackBar("✅ ${result['message']}");
                   _fetchDashboardData();
                 } else {
-                  _triggerSnackBar("❌ حدث خطأ أثناء الحذف");
+                  _triggerSnackBar("❌ ${result['message']}");
                   setState(() => _isLoading = false);
                 }
-              } catch(e) {
-                _triggerSnackBar("❌ حدث خطأ في الاتصال بالخادم");
-                setState(() => _isLoading = false);
               }
             }, 
             child: Text("نعم، احذفها", style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold))

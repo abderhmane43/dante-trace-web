@@ -165,6 +165,26 @@ class ApiService {
     }
   }
 
+  // 🔥 دالة حذف مستخدم (محمية برمز المدير)
+  static Future<Map<String, dynamic>> deleteUser(int userId, String masterPin) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.delete(
+        Uri.parse('$baseUrl/users/$userId?master_pin=$masterPin'),
+        headers: headers,
+      ).timeout(const Duration(seconds: 30));
+      
+      final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+      if (response.statusCode == 200) {
+        return {"success": true, "message": "تم حذف المستخدم بنجاح"};
+      } else {
+        return {"success": false, "message": responseData["detail"] ?? "الرمز السري خاطئ أو المستخدم مرتبط ببيانات"};
+      }
+    } catch (e) {
+      return {"success": false, "message": "انقطع الاتصال بالسيرفر."};
+    }
+  }
+
   // ==========================================================
   // 💰 3. المحرك المالي والمصاريف (Financial & Expenses Engine)
   // ==========================================================
@@ -279,11 +299,12 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> deleteProduct(int productId) async {
+  // 🔥 دالة حذف منتج (محمية برمز المدير)
+  static Future<Map<String, dynamic>> deleteProduct(int productId, String masterPin) async {
     try {
       final headers = await _getHeaders();
       final response = await http.delete(
-        Uri.parse('$baseUrl/admin/products/$productId'),
+        Uri.parse('$baseUrl/admin/products/$productId?master_pin=$masterPin'),
         headers: headers,
       ).timeout(const Duration(seconds: 30));
       
@@ -291,7 +312,7 @@ class ApiService {
       if (response.statusCode == 200) {
         return {"success": true, "message": responseData["message"] ?? "تم الحذف بنجاح"};
       } else {
-        return {"success": false, "message": responseData["detail"] ?? "حدث خطأ أثناء الحذف"};
+        return {"success": false, "message": responseData["detail"] ?? "حدث خطأ أو الرمز السري خاطئ"};
       }
     } catch (e) {
       return {"success": false, "message": "انقطع الاتصال بالسيرفر. يرجى المحاولة لاحقاً."};
@@ -326,6 +347,27 @@ class ApiService {
   // ==========================================================
   // 📦 5. إدارة الطلبيات والسائقين (Logistics, Split & Schedule)
   // ==========================================================
+  
+  // 🔥 دالة حذف طلبية (محمية برمز المدير)
+  static Future<Map<String, dynamic>> deleteShipment(int shipmentId, String masterPin) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.delete(
+        Uri.parse('$baseUrl/admin/shipments/$shipmentId?master_pin=$masterPin'),
+        headers: headers,
+      ).timeout(const Duration(seconds: 30));
+      
+      final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+      if (response.statusCode == 200) {
+        return {"success": true, "message": "تم حذف الطلبية بنجاح"};
+      } else {
+        return {"success": false, "message": responseData["detail"] ?? "الرمز السري خاطئ أو غير مصرح لك"};
+      }
+    } catch (e) {
+      return {"success": false, "message": "انقطع الاتصال بالسيرفر."};
+    }
+  }
+
   static Future<bool> createCustomerOrder(Map<String, dynamic> orderData) async {
     try {
       final headers = await _getHeaders();
@@ -386,7 +428,6 @@ class ApiService {
     }
   }
 
-  // 🔥 تم إضافة skipNfc هنا بشكل صحيح لحل المشكلة
   static Future<bool> assignOrderToDriver(int shipmentId, int driverId, {bool skipNfc = true}) async {
     try {
       final headers = await _getHeaders();
@@ -395,7 +436,7 @@ class ApiService {
         headers: headers,
         body: jsonEncode({
           "driver_id": driverId,
-          "skip_nfc": skipNfc // إرسال المتغير للسيرفر
+          "skip_nfc": skipNfc 
         }),
       );
       return response.statusCode == 200;
@@ -509,7 +550,6 @@ class ApiService {
   // ==========================================================
   // 🤝 7. المصافحة الثلاثية (Handshake & Settlement)
   // ==========================================================
-  
   static Future<bool> performHandshake(String driverNfc, String trackingNumber) async {
     try {
       final headers = await _getHeaders();
@@ -548,8 +588,6 @@ class ApiService {
   // ==========================================================
   // 💸 8. النظام المالي الجديد (تصريح الزبون وتأكيد الإدارة) 🔥
   // ==========================================================
-  
-  // دالة خاصة بالزبون لإرسال إشعار تفاصيل الدفع
   static Future<bool> customerDeclarePayment(int shipmentId, List<Map<String, dynamic>> payments) async {
     try {
       final headers = await _getHeaders();
@@ -569,7 +607,6 @@ class ApiService {
     }
   }
 
-  // 🔥 دالة خاصة بالإدارة للموافقة على الدفع وتحويل المال لعهدة السائق
   static Future<bool> adminVerifyPayment(int shipmentId, double cash, double check) async {
     try {
       final headers = await _getHeaders();
@@ -592,7 +629,6 @@ class ApiService {
     }
   }
 
-  // 🔥 دالة خاصة بالإدارة لرفض تصريح الزبون وإعادته له
   static Future<bool> adminRejectPayment(int shipmentId, String reason) async {
     try {
       final headers = await _getHeaders();
@@ -617,7 +653,6 @@ class ApiService {
   // ==========================================================
   // 💼 9. عمليات المحصل الميداني (Collector Operations)
   // ==========================================================
-
   static Future<Map<String, dynamic>?> getCollectorDebtors() async {
     try {
       final headers = await _getHeaders();
@@ -673,6 +708,22 @@ class ApiService {
       return {"success": false, "message": data['detail'] ?? "حدث خطأ"};
     } catch (e) {
       return {"success": false, "message": "انقطع الاتصال بالسيرفر"};
+    }
+  }
+
+  // ==========================================================
+  // 🛡️ 10. نظام الحارس (Version Checker)
+  // ==========================================================
+  static Future<String> getRequiredAppVersion() async {
+    try {
+      // 💡 مستقبلاً يمكنك جلب هذا الرقم عبر API من قاعدة البيانات
+      // final response = await http.get(Uri.parse('$baseUrl/config/version'));
+      // return jsonDecode(response.body)['required_version'];
+      
+      // حالياً، قم بتغيير هذا الرقم يدوياً عندما ترفع APK جديد في الواتساب
+      return "1.0.0"; 
+    } catch (e) {
+      return "1.0.0"; // افتراضي في حالة تعذر الاتصال لتجنب إغلاق التطبيق بالخطأ
     }
   }
 }

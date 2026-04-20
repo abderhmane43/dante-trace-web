@@ -1,18 +1,31 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb; // 🔥 استيراد مهم جداً لفحص بيئة الويب
+import 'package:flutter/foundation.dart' show kIsWeb; 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'screens/shared/login_screen.dart';
 import 'screens/admin/admin_dashboard_screen.dart';
-import 'screens/admin/admin_web_dashboard.dart'; // 🔥 استيراد لوحة تحكم الويب المخصصة
+import 'screens/admin/admin_web_dashboard.dart'; 
 import 'screens/driver/driver_dashboard_screen.dart';
 import 'screens/customer/customer_dashboard_screen.dart';
+
+// 🔥 الإضافة 1: استيراد شاشة الحارس
+import 'screens/shared/splash_screen.dart'; 
 
 void main() async {
   // التأكد من تهيئة الـ Widgets قبل تشغيل أي كود غير متزامن (Async)
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // 🔥 الإضافة 2: إذا كان الجهاز هاتفاً (Android/iOS)، يجب أن يمر على الحارس أولاً دائماً لفحص التحديث
+  if (!kIsWeb) {
+    runApp(const DanteTraceApp(homeScreen: SplashScreen()));
+    return; // نوقف التنفيذ هنا للهاتف لكي تتكفل شاشة الحارس بالباقي
+  }
+
+  // ==========================================================
+  // 👇 كل ما بالأسفل هو كودك الأصلي، وسيعمل للويب بشكل مثالي 👇
+  // ==========================================================
   
   // تحديد الشاشة الافتراضية مبدئياً لتكون شاشة تسجيل الدخول
   Widget defaultHome = const LoginScreen(); 
@@ -28,7 +41,7 @@ void main() async {
       Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
       String role = decodedToken['role'] ?? '';
 
-      // 🔥 التوجيه الذكي عند فتح التطبيق (أو عمل Refresh) والمستخدم مسجل دخوله بالفعل
+      // التوجيه الذكي عند فتح التطبيق (أو عمل Refresh) والمستخدم مسجل دخوله بالفعل
       if (role == 'admin') {
         if (kIsWeb) {
           defaultHome = const AdminWebDashboard(); // 💻 توجيه للوحة الويب الكاملة
