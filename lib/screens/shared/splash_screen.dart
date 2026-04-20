@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:url_launcher/url_launcher.dart'; // 🔥 مكتبة فتح الروابط للتحميل المباشر
 
 // 🔥 المسارات المطلقة لتجنب أي تعارض
 import 'package:dante_trace_mobile/services/api_service.dart';
@@ -44,43 +45,51 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     super.dispose();
   }
 
-  // 🛡️ المحرك الأساسي للحارس
+  // 🛡️ المحرك الأساسي للحارس (Guard Engine)
   Future<void> _runGuardChecks() async {
-    // 1. إعطاء وقت قصير للأنيميشن
+    // 1. إعطاء وقت قصير للأنيميشن واللوجو
     await Future.delayed(const Duration(seconds: 2));
 
     // 2. التحقق من الإصدار (لا يتم على الويب لأن الويب يتحدث تلقائياً)
     if (!kIsWeb) {
-      PackageInfo packageInfo = await PackageInfo.fromPlatform();
-      _currentVersion = packageInfo.version;
-      _requiredVersion = await ApiService.getRequiredAppVersion();
+      try {
+        PackageInfo packageInfo = await PackageInfo.fromPlatform();
+        _currentVersion = packageInfo.version;
+        _requiredVersion = await ApiService.getRequiredAppVersion();
 
-      if (_isUpdateRequired(_currentVersion, _requiredVersion)) {
-        if (mounted) {
-          setState(() {
-            _needsUpdate = true;
-          });
+        if (_isUpdateRequired(_currentVersion, _requiredVersion)) {
+          if (mounted) {
+            setState(() {
+              _needsUpdate = true;
+            });
+          }
+          return; // 🛑 إيقاف الدخول وإظهار شاشة التحديث الإجبارية
         }
-        return; // 🛑 إيقاف العملية هنا وإظهار شاشة التحديث الإجبارية
+      } catch (e) {
+        debugPrint("فشل فحص الإصدار: $e");
       }
     }
 
-    // 3. إذا كان الإصدار سليماً (أو كنا على الويب)، نقوم بالتوجيه الذكي
+    // 3. إذا كان الإصدار سليماً، ننتقل للفحص الأمني للتوكن
     _checkTokenAndNavigate();
   }
 
-  // 🧠 خوارزمية مقارنة الإصدارات (مثلاً: 1.0.1 أكبر من 1.0.0)
+  // 🧠 خوارزمية مقارنة الإصدارات
   bool _isUpdateRequired(String current, String required) {
-    List<int> currentParts = current.split('.').map(int.parse).toList();
-    List<int> requiredParts = required.split('.').map(int.parse).toList();
+    try {
+      List<int> currentParts = current.split('.').map(int.parse).toList();
+      List<int> requiredParts = required.split('.').map(int.parse).toList();
 
-    for (int i = 0; i < requiredParts.length; i++) {
-      int c = i < currentParts.length ? currentParts[i] : 0;
-      int r = requiredParts[i];
-      if (c < r) return true;  // النسخة الحالية أقدم
-      if (c > r) return false; // النسخة الحالية أحدث
+      for (int i = 0; i < requiredParts.length; i++) {
+        int c = i < currentParts.length ? currentParts[i] : 0;
+        int r = requiredParts[i];
+        if (c < r) return true;  // النسخة الحالية أقدم
+        if (c > r) return false; // النسخة الحالية أحدث
+      }
+    } catch (e) {
+      return false;
     }
-    return false; // النسختان متطابقتان
+    return false;
   }
 
   Future<void> _checkTokenAndNavigate() async {
@@ -124,7 +133,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
         child: FadeTransition(
           opacity: _fadeAnimation,
           child: _needsUpdate 
-            ? _buildUpdateUI() // 🛑 الشاشة الحمراء
+            ? _buildUpdateUI() // 🛑 تفعيل الشاشة الحمراء للتحديث
             : _buildLoadingUI(), // ⏳ شاشة التحميل العادية
         ),
       ),
@@ -138,14 +147,14 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
       children: [
         Image.asset('assets/images/logo.png', height: 120, errorBuilder: (c, e, s) => const Icon(Icons.local_shipping, size: 80, color: Colors.white)),
         const SizedBox(height: 20),
-        Text("DANTE CLOUD", style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 3)),
+        Text("DANTE TRACE", style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 3)),
         const SizedBox(height: 30),
         const CircularProgressIndicator(color: Colors.white),
       ],
     );
   }
 
-  // 🛑 واجهة التحديث الإجباري (لا يوجد بها زر إغلاق!)
+  // 🛑 واجهة التحديث الإجباري (مع زر التحميل المباشر من GitHub)
   Widget _buildUpdateUI() {
     return Padding(
       padding: const EdgeInsets.all(30.0),
@@ -154,18 +163,51 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
         children: [
           const Icon(Icons.system_update_rounded, size: 100, color: Colors.white),
           const SizedBox(height: 30),
-          Text("تحديث إجباري مطلوب", style: GoogleFonts.cairo(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
+          Text("تحديث إجباري متاح", style: GoogleFonts.cairo(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
           const SizedBox(height: 15),
           Text(
-            "نسخة التطبيق الحالية ($_currentVersion) قديمة جداً ولا تتوافق مع السيرفر المركزي.\n\nيرجى التوجه إلى مجموعة الواتساب الخاصة بالشركة وتثبيت أحدث نسخة (APK) أرسلتها الإدارة.",
+            "نسختك الحالية ($_currentVersion) قديمة جداً.\nيرجى الضغط على الزر أدناه لتحميل وتثبيت أحدث نسخة لضمان استمرار عمل النظام بكفاءة.",
             textAlign: TextAlign.center,
             style: GoogleFonts.cairo(fontSize: 16, color: Colors.white70, height: 1.5),
           ),
           const SizedBox(height: 40),
+          
+          // 🔥 زر التحديث التلقائي بالرابط المباشر
+          SizedBox(
+            width: double.infinity,
+            height: 55,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: const Color(0xFFD32F2F),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                elevation: 8,
+              ),
+              icon: const Icon(Icons.download_rounded, size: 24),
+              label: Text("تحديث التطبيق الآن", style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold)),
+              onPressed: () async {
+                // 🔗 الرابط المباشر للملف على GitHub
+                final Uri apkUrl = Uri.parse("https://github.com/abderhmane43/dante-app-releases/releases/download/v1.0.0/app-release.apk"); 
+                
+                try {
+                  if (await canLaunchUrl(apkUrl)) {
+                    // فتح الرابط في المتصفح الخارجي ليبدأ التحميل فوراً
+                    await launchUrl(apkUrl, mode: LaunchMode.externalApplication);
+                  } else {
+                    debugPrint("لا يمكن فتح الرابط المباشر");
+                  }
+                } catch (e) {
+                  debugPrint("تعذر فتح رابط التحديث: $e");
+                }
+              },
+            ),
+          ),
+          
+          const SizedBox(height: 25),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(10)),
-            child: Text("النسخة المطلوبة: $_requiredVersion", style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold)),
+            decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(10)),
+            child: Text("النسخة المطلوبة: $_requiredVersion", style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
           )
         ],
       ),

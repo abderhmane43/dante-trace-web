@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // 🔗 تأكد من مسار خدمة الـ API الخاص بك
 import '../../services/api_service.dart';
+// 🔥 استيراد نافذة الحماية بالرقم السري
+import '../../widgets/master_pin_dialog.dart';
 
 class AdminB2BPricingScreen extends StatefulWidget {
   const AdminB2BPricingScreen({super.key});
@@ -143,9 +145,9 @@ class _AdminB2BPricingScreenState extends State<AdminB2BPricingScreen> {
     }
   }
 
-  // 🗑️ 4. حذف المنتج (تم إضافتها حديثاً)
+  // 🗑️ 4. حذف المنتج (تم دمج حارس الرقم السري هنا 🔥)
   Future<void> _confirmAndDeleteProduct(int productId, String productName) async {
-    // 1. إظهار نافذة تأكيد الحذف
+    // 1. إظهار نافذة تأكيد الحذف العادية
     bool confirm = await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -174,22 +176,27 @@ class _AdminB2BPricingScreenState extends State<AdminB2BPricingScreen> {
 
     if (!confirm) return;
 
-    // 2. إرسال طلب الحذف
-    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
-    
-    final result = await ApiService.deleteProduct(productId);
-    
-    if (mounted) Navigator.pop(context); // إغلاق التحميل
+    // 🔥 2. استدعاء الحارس لطلب الرقم السري للمدير العام
+    String? pin = await MasterPinDialog.show(context);
 
-    if (result["success"] == true) {
-      _showSnackBar(result["message"], Colors.green.shade700);
-      _fetchInitialData(); // تحديث القوائم لإزالة المنتج
-      if (_selectedCustomerId != null) {
-        _fetchCustomPricesForCustomer(_selectedCustomerId!); // تحديث الأسعار המخصصة
+    if (pin != null && pin.isNotEmpty) {
+      // 3. إرسال طلب الحذف للسيرفر مع الرقم السري
+      showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
+      
+      final result = await ApiService.deleteProduct(productId, pin); // 🔥 تمرير الـ PIN هنا
+      
+      if (mounted) Navigator.pop(context); // إغلاق التحميل
+
+      if (result["success"] == true) {
+        _showSnackBar(result["message"], Colors.green.shade700);
+        _fetchInitialData(); // تحديث القوائم لإزالة المنتج
+        if (_selectedCustomerId != null) {
+          _fetchCustomPricesForCustomer(_selectedCustomerId!); // تحديث الأسعار המخصصة
+        }
+      } else {
+        // إظهار رسالة الخطأ (مثل الكود خاطئ أو مرتبط بطلبيات)
+        _showSnackBar(result["message"], Colors.red.shade800);
       }
-    } else {
-      // إظهار رسالة الخطأ (مثل لارتباطه بطلبيات)
-      _showSnackBar(result["message"], Colors.red.shade800);
     }
   }
 

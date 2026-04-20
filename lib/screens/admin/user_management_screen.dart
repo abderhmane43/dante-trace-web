@@ -10,6 +10,8 @@ import 'package:nfc_manager/nfc_manager.dart'; // 🔥 استيراد مكتبة
 import '../../services/api_service.dart';
 // 🔥 استيراد نافذة التعديل السحرية
 import '../../widgets/admin/edit_user_dialog.dart'; 
+// 🔥 استيراد نافذة الرقم السري للمدير (الحارس)
+import '../../widgets/master_pin_dialog.dart'; 
 
 class UserManagementScreen extends StatefulWidget {
   const UserManagementScreen({super.key});
@@ -58,8 +60,9 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     }
   }
 
-  // 🗑️ دالة الحذف الذكية
+  // 🗑️ دالة الحذف الذكية (تم تحديثها لطلب Master PIN 🔥)
   Future<void> _deleteUser(int userId, String userName) async {
+    // 1. طلب التأكيد المبدئي
     bool? confirm = await showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -79,19 +82,25 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
     if (confirm != true) return;
 
-    setState(() => _isLoading = true);
-    try {
-      final token = await SharedPreferences.getInstance().then((p) => p.getString('auth_token'));
-      final response = await http.delete(
-        Uri.parse('${ApiService.baseUrl}/users/$userId'), 
-        headers: {'Authorization': 'Bearer $token'}
-      );
+    // 2. إظهار نافذة الحارس لطلب الرقم السري
+    String? pin = await MasterPinDialog.show(context);
+    
+    // 3. التحقق من إدخال الرقم السري
+    if (pin == null || pin.isEmpty) return; // تم الإلغاء من قبل المستخدم
 
-      if ((response.statusCode == 200 || response.statusCode == 204) && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✅ تم الحذف بنجاح', style: GoogleFonts.cairo()), backgroundColor: Colors.green));
-        _fetchUsers(); 
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ فشل الحذف، قد يكون المستخدم مرتبطاً بعمليات مالية.', style: GoogleFonts.cairo()), backgroundColor: Colors.red));
+    setState(() => _isLoading = true);
+    
+    try {
+      // 4. إرسال طلب الحذف عبر خدمة ApiService المخصصة لضمان إرسال الـ PIN
+      final result = await ApiService.deleteUser(userId, pin);
+
+      if (mounted) {
+        if (result['success'] == true) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✅ ${result['message']}', style: GoogleFonts.cairo()), backgroundColor: Colors.green));
+          _fetchUsers(); 
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ ${result['message']}', style: GoogleFonts.cairo()), backgroundColor: Colors.red));
+        }
       }
     } catch (e) {
        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ خطأ في الاتصال بالخادم', style: GoogleFonts.cairo()), backgroundColor: Colors.red));
@@ -431,7 +440,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                       },
                     ),
                     
-                    // 🗑️ زر الحذف القديم
+                    // 🗑️ زر الحذف (تم دمجه مع حارس Master PIN 🔥)
                     IconButton(
                       icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
                       tooltip: "حذف الحساب",
