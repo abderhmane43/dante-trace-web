@@ -310,13 +310,13 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     }
   }
 
+  // 🔥 دالة التوجيه المحدثة (Direct Route Reset) لحل مشكلة الويب نهائياً
   void _navigate(Widget screen) {
-    Navigator.pushReplacement(context, PageRouteBuilder(
-      pageBuilder: (context, animation, secondaryAnimation) => screen,
-      transitionsBuilder: (context, animation, secondaryAnimation, child) {
-        return FadeTransition(opacity: animation, child: child); 
-      },
-    ));
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => screen),
+      (route) => false, // 🔥 يمسح كل الشاشات السابقة لضمان عدم تعارض الـ History
+    );
   }
 
   void _showSnackBar(String message, Color color, IconData icon) {

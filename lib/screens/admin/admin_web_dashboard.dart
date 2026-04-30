@@ -18,6 +18,9 @@ import 'package:dante_trace_mobile/screens/admin/customer_prices_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/user_management_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/add_user_screen.dart';
 
+// 🔥 استيراد شاشة تسجيل الدخول بشكل مباشر لضمان التوجيه
+import 'package:dante_trace_mobile/screens/shared/login_screen.dart';
+
 class AdminWebDashboard extends StatefulWidget {
   const AdminWebDashboard({super.key});
 
@@ -54,7 +57,7 @@ class _AdminWebDashboardState extends State<AdminWebDashboard> {
     ];
   }
 
-  // 🚪 دالة تسجيل الخروج الآمنة
+  // 🚪 دالة تسجيل الخروج الآمنة (تم تحديثها 🔥)
   Future<void> _handleLogout() async {
     bool? confirm = await showDialog(
       context: context,
@@ -81,9 +84,18 @@ class _AdminWebDashboardState extends State<AdminWebDashboard> {
 
     if (confirm == true) {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('auth_token');
-      await prefs.remove('user_role');
-      if (mounted) Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+      
+      // 🔥 مسح جميع البيانات من الذاكرة لضمان عدم بقاء أي توكن معلق
+      await prefs.clear(); 
+      
+      if (mounted) {
+        // 🔥 التوجيه المباشر لشاشة تسجيل الدخول مع مسح كل الشاشات السابقة من الخلفية
+        Navigator.pushAndRemoveUntil(
+          context, 
+          MaterialPageRoute(builder: (context) => const LoginScreen()), 
+          (route) => false
+        );
+      }
     }
   }
 
