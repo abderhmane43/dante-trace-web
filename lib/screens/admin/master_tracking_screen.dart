@@ -262,7 +262,7 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
           children: [
             // 🔍 شريط البحث
             Container(
-              color: isDesktop ? softBg : Colors.white, // تغيير بسيط للون في الكمبيوتر
+              color: isDesktop ? softBg : Colors.white, 
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 15),
               child: TextField(
                 controller: _searchController,
@@ -307,7 +307,7 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
                 child: Row(
                   children: [
                     _buildFilterChip('all', 'الكل', Icons.all_inbox_rounded),
-                    _buildFilterChip('verification_group', 'مراجعة مالية 💳', Icons.receipt_long_rounded), // 🔥 الفلتر الجديد
+                    _buildFilterChip('verification_group', 'مراجعة مالية 💳', Icons.receipt_long_rounded), 
                     _buildFilterChip('pending_group', 'قيد الانتظار', Icons.hourglass_empty_rounded),
                     _buildFilterChip('active_group', 'في الميدان', Icons.local_shipping_rounded),
                     _buildFilterChip('delivered_group', 'تم التسليم', Icons.where_to_vote_rounded),
@@ -317,7 +317,7 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
               ),
             ),
 
-            // 📊 شريط العداد المالي والإحصائيات الذكية 🔥
+            // 📊 شريط العداد المالي والإحصائيات الذكية
             if (!_isLoading)
               Container(
                 margin: const EdgeInsets.fromLTRB(20, 15, 20, 5),
@@ -358,19 +358,23 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
                       child: _filteredOrders.isEmpty
                           ? _buildEmptyState()
                           : isDesktop 
-                              // 🔥 تصميم Grid متجاوب لحالة الويب والحواسيب
-                              ? GridView.builder(
+                              // 🔥 التصميم الجديد (Wrap) لحل مشكلة التداخل في المتصفح 🔥
+                              ? SingleChildScrollView(
                                   padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
-                                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: 3, 
-                                    crossAxisSpacing: 15,
-                                    mainAxisSpacing: 15,
-                                    childAspectRatio: 2.2, // نسبة تتناسب مع البطاقات الأفقية
+                                  physics: const BouncingScrollPhysics(),
+                                  child: Wrap(
+                                    spacing: 15, // المسافة الأفقية بين الكروت
+                                    runSpacing: 15, // المسافة العمودية بين الكروت
+                                    children: _filteredOrders.map((order) {
+                                      // حساب عرض الكارت بناءً على حجم الشاشة (ليكون لدينا 3 كروت في السطر تقريباً)
+                                      return SizedBox(
+                                        width: (MediaQuery.of(context).size.width - 200) / 3,
+                                        child: _buildOrderCard(order, isDesktop: true), // تمرير isDesktop لمنع الهوامش الزائدة
+                                      );
+                                    }).toList(),
                                   ),
-                                  itemCount: _filteredOrders.length,
-                                  itemBuilder: (context, index) => _buildOrderCard(_filteredOrders[index]),
                                 )
-                              // تصميم القائمة (ListView) للهواتف
+                              // تصميم القائمة (ListView) للموبايل يظل كما هو
                               : ListView.builder(
                                   padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
                                   physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
@@ -396,7 +400,7 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
         showCheckmark: false,
         elevation: 0,
         pressElevation: 0,
-        backgroundColor: filterValue == 'verification_group' ? Colors.orange.shade50 : Colors.grey.shade100, // تلوين الفلتر المالي
+        backgroundColor: filterValue == 'verification_group' ? Colors.orange.shade50 : Colors.grey.shade100, 
         selectedColor: filterValue == 'verification_group' ? Colors.orange.shade700 : darkBlue,
         side: BorderSide(color: isSelected ? (filterValue == 'verification_group' ? Colors.orange.shade700 : darkBlue) : Colors.grey.shade200),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -418,31 +422,27 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
     );
   }
 
-  // 🔥 التصميم الجديد كلياً لبطاقة الطلبية 🔥
-  Widget _buildOrderCard(Map<String, dynamic> order) {
+  // 🔥 إضافة متغير isDesktop للتحكم بالهوامش
+  Widget _buildOrderCard(Map<String, dynamic> order, {bool isDesktop = false}) {
     final String status = order['delivery_status']?.toString() ?? 'pending';
     final String paymentStatus = order['payment_status']?.toString() ?? 'unpaid';
     final String trackingNum = order['tracking_number']?.toString() ?? '-';
     final String customerName = order['customer_name']?.toString() ?? 'مجهول';
     final String customerPhone = order['customer_phone']?.toString() ?? '';
     
-    // هل تحتاج هذه الطلبية لمراجعة مالية الآن؟
     final bool needsPaymentVerification = (paymentStatus == 'pending_admin_verification');
     
-    // جلب التاريخ
     String dateStr = "غير محدد";
     if (order['created_at'] != null) {
       dateStr = order['created_at'].toString().split('T')[0];
     }
 
-    // التنسيق المالي
     final double amountVal = double.tryParse(order['cash_amount']?.toString() ?? '0') ?? 0.0;
     final String formattedAmount = NumberFormat('#,##0.00').format(amountVal);
 
     Color statusColor;
     String statusLabel;
 
-    // ألوان الحالات (Pro Mode) مع التركيز على المراجعة المالية
     if (needsPaymentVerification) {
       statusColor = Colors.orange.shade700; statusLabel = 'تأكيد الدفع ⏳';
     } else if (status == 'delivered' && paymentStatus == 'awaiting_customer_payment') {
@@ -462,7 +462,8 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
     }
 
     return Container(
-      margin: EdgeInsets.only(bottom: kIsWeb ? 0 : 15),
+      // 🔥 إزالة الهامش السفلي في حالة الكمبيوتر لأن الـ Wrap يتكفل بالمساحات
+      margin: EdgeInsets.only(bottom: isDesktop ? 0 : 15),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -474,7 +475,6 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 🚚 الأيقونة الجانبية
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: needsPaymentVerification ? Colors.orange.shade50 : darkBlue.withOpacity(0.05), shape: BoxShape.circle),
@@ -482,12 +482,10 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
             ),
             const SizedBox(width: 15),
             
-            // 📝 التفاصيل والبيانات
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // الاسم والمبلغ
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -496,7 +494,6 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
                     ],
                   ),
                   
-                  // رقم التتبع (مع إمكانية النسخ)
                   InkWell(
                     onLongPress: () {
                       Clipboard.setData(ClipboardData(text: trackingNum));
@@ -515,7 +512,6 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
                     ),
                   ),
 
-                  // التاريخ
                   Row(
                     children: [
                       Icon(Icons.calendar_today_rounded, size: 11, color: Colors.grey.shade500),
@@ -526,7 +522,6 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
 
                   const SizedBox(height: 12),
 
-                  // 🎛️ الأزرار والحالة (Wrap يمنع تداخل العناصر وينزلها لسطر جديد لو ضاقت الشاشة)
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
@@ -534,7 +529,6 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
                     children: [
                       _buildStatusBadge(statusLabel, statusColor),
                       
-                      // 🔥 زر المراجعة المالية (يظهر فقط إذا كان الزبون قد صرح بالدفع)
                       if (needsPaymentVerification)
                         InkWell(
                           onTap: () {
@@ -579,7 +573,6 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
     );
   }
 
-  // 🛠️ دالة مساعدة لإنشاء الأزرار الصغيرة
   Widget _buildActionBtn(IconData icon, Color iconColor, Color bgColor, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
@@ -592,7 +585,6 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
     );
   }
 
-  // 🏷️ دالة مساعدة لإنشاء شارة الحالة (Badge)
   Widget _buildStatusBadge(String label, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
