@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data'; // 🔥 للتعامل مع الصور (Bytes)
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb; 
 import 'package:google_fonts/google_fonts.dart';
@@ -9,6 +10,7 @@ import 'package:nfc_manager/nfc_manager.dart';
 import 'package:web_socket_channel/web_socket_channel.dart'; 
 import 'package:intl/intl.dart'; 
 import 'package:url_launcher/url_launcher.dart'; 
+import 'package:image_picker/image_picker.dart'; // 🔥 استيراد مكتبة الكاميرا والصور
 
 import '../../services/api_service.dart';
 import '../shared/login_screen.dart'; 
@@ -148,10 +150,191 @@ class _CollectorDashboardScreenState extends State<CollectorDashboardScreen> {
   }
 
   // ==========================================
+  // 💸 نافذة تسجيل المصروف (إلزامية البون)
+  // ==========================================
+  void _showAddExpenseSheet() {
+    final TextEditingController amountController = TextEditingController();
+    final TextEditingController descController = TextEditingController();
+    
+    Uint8List? selectedImageBytes;
+    String? base64Image;
+    bool isSubmitting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+              ),
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+                left: 20, right: 20, top: 20
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.money_off_rounded, color: primaryRed, size: 28),
+                      const SizedBox(width: 10),
+                      Text("تسجيل مصروف جديد", style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold, color: darkBlue)),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text("سيتم خصم هذا المبلغ من عهدتك فوراً بعد إرفاق البون.", style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey.shade600)),
+                  const SizedBox(height: 20),
+                  
+                  // إدخال المبلغ
+                  TextField(
+                    controller: amountController,
+                    keyboardType: TextInputType.number,
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16),
+                    decoration: InputDecoration(
+                      labelText: "المبلغ (دج)*",
+                      labelStyle: GoogleFonts.cairo(),
+                      prefixIcon: const Icon(Icons.attach_money_rounded),
+                      filled: true,
+                      fillColor: bgGray,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  
+                  // إدخال البيان
+                  TextField(
+                    controller: descController,
+                    maxLines: 2,
+                    style: GoogleFonts.cairo(),
+                    decoration: InputDecoration(
+                      labelText: "بيان المصروف (ماذا اشتريت؟)*",
+                      labelStyle: GoogleFonts.cairo(),
+                      prefixIcon: const Icon(Icons.edit_document),
+                      filled: true,
+                      fillColor: bgGray,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+
+                  // 🔥 زر الكاميرا وإرفاق البون
+                  InkWell(
+                    onTap: () async {
+                      final ImagePicker picker = ImagePicker();
+                      // إعطاء المستخدم خيار الكاميرا أو المعرض (الكاميرا أفضل للعمل الميداني)
+                      final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
+                      
+                      if (image != null) {
+                        final bytes = await image.readAsBytes();
+                        setModalState(() {
+                          selectedImageBytes = bytes;
+                          base64Image = base64Encode(bytes);
+                        });
+                      }
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(15),
+                      decoration: BoxDecoration(
+                        color: selectedImageBytes == null ? Colors.orange.shade50 : Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: selectedImageBytes == null ? Colors.orange.shade300 : Colors.green.shade300, style: BorderStyle.solid),
+                      ),
+                      child: Column(
+                        children: [
+                          Icon(
+                            selectedImageBytes == null ? Icons.camera_alt_rounded : Icons.check_circle_rounded, 
+                            color: selectedImageBytes == null ? Colors.orange.shade800 : Colors.green.shade800, 
+                            size: 30
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            selectedImageBytes == null ? "التقط صورة البون (إجباري)*" : "تم إرفاق صورة البون بنجاح", 
+                            style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: selectedImageBytes == null ? Colors.orange.shade800 : Colors.green.shade800)
+                          ),
+                          if (selectedImageBytes != null) ...[
+                            const SizedBox(height: 10),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.memory(selectedImageBytes!, height: 80, width: double.infinity, fit: BoxFit.cover),
+                            )
+                          ]
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 25),
+                  
+                  // زر الإرسال
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryRed,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: isSubmitting ? null : () async {
+                        final double? amount = double.tryParse(amountController.text.trim());
+                        final String desc = descController.text.trim();
+
+                        if (amount == null || amount <= 0) {
+                          _showToast("يرجى إدخال مبلغ صحيح", Colors.orange.shade800);
+                          return;
+                        }
+                        if (desc.isEmpty) {
+                          _showToast("يرجى كتابة بيان المصروف", Colors.orange.shade800);
+                          return;
+                        }
+                        if (base64Image == null) {
+                          _showToast("لا يمكن اعتماد المصروف بدون صورة البون!", Colors.red.shade800);
+                          return;
+                        }
+
+                        setModalState(() => isSubmitting = true);
+
+                        // 🔥 إرسال الطلب للسيرفر
+                        bool success = await ApiService.submitDriverExpense(
+                          amount, 
+                          desc, 
+                          receiptImage: base64Image
+                        );
+
+                        setModalState(() => isSubmitting = false);
+
+                        if (success) {
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          _showToast("تم خصم المصروف من عهدتك بنجاح ✅", successGreen);
+                          _fetchCollectorData(); // تحديث الخزينة
+                        } else {
+                          _showToast("رصيدك لا يكفي أو حدث خطأ في الاتصال", Colors.red);
+                        }
+                      },
+                      child: isSubmitting 
+                          ? const CircularProgressIndicator(color: Colors.white) 
+                          : Text("تأكيد وخصم المصروف", style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
+                  )
+                ],
+              ),
+            );
+          }
+        );
+      }
+    );
+  }
+
+  // ==========================================
   // 📡 دالة استلام الأموال من السائق عبر NFC
   // ==========================================
   Future<void> _startNfcDriverCollection() async {
-    // 🔥 حماية إذا تم فتح الشاشة من الويب
     if (kIsWeb) {
       _showToast("خاصية NFC متاحة فقط في تطبيق الهاتف", Colors.orange.shade800);
       return;
@@ -203,7 +386,6 @@ class _CollectorDashboardScreenState extends State<CollectorDashboardScreen> {
 
         List<int>? identifier;
         try {
-          // 🔥 الحل النهائي لمشكلة الخط الأحمر في Dart
           final Map<dynamic, dynamic> rawTagData = (tag as dynamic).data as Map<dynamic, dynamic>;
           for (var value in rawTagData.values) {
             if (value is Map && value.containsKey('identifier')) {
@@ -402,6 +584,23 @@ class _CollectorDashboardScreenState extends State<CollectorDashboardScreen> {
             fit: BoxFit.scaleDown,
             child: Text("$formattedBalance دج", style: GoogleFonts.poppins(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900)),
           ),
+          const SizedBox(height: 15),
+          
+          // 🔥 زر تسجيل المصروف المباشر المضاف حديثاً
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: primaryRed,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(vertical: 10)
+              ),
+              onPressed: _showAddExpenseSheet,
+              icon: const Icon(Icons.receipt_long_rounded, size: 18),
+              label: Text("تسجيل وخصم مصروف 💸", style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
+            ),
+          )
         ],
       ),
     );

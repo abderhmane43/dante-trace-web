@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data'; // 🔥 استيراد للتعامل مع صور المصروفات
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb; // 🔥 استيراد مهم لفحص بيئة الويب
 import 'package:http/http.dart' as http;
@@ -9,6 +10,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:badges/badges.dart' as badges;
 import 'package:intl/intl.dart'; 
 import 'package:url_launcher/url_launcher.dart';
+import 'package:image_picker/image_picker.dart'; // 🔥 استيراد الكاميرا للمصروفات
 
 import '../../widgets/admin/admin_drawer.dart';
 import '../../services/api_service.dart';
@@ -406,6 +408,163 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  // 🔥 إضافة دالة تسجيل المصروف للإدارة
+  void _showAddAdminExpenseSheet() {
+    final TextEditingController amountController = TextEditingController();
+    final TextEditingController descController = TextEditingController();
+    
+    Uint8List? selectedImageBytes;
+    String? base64Image;
+    bool isSubmitting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+              ),
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+                left: 20, right: 20, top: 20
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.money_off_rounded, color: primaryRed, size: 28),
+                      const SizedBox(width: 10),
+                      Text("صرف مالي من الخزينة", style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold, color: darkBlue)),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text("سيتم الخصم المباشر واعتماد المصروف فوراً للمدير.", style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey.shade600)),
+                  const SizedBox(height: 20),
+                  
+                  TextField(
+                    controller: amountController,
+                    keyboardType: TextInputType.number,
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16),
+                    decoration: InputDecoration(
+                      labelText: "المبلغ (دج)*",
+                      labelStyle: GoogleFonts.cairo(),
+                      prefixIcon: const Icon(Icons.attach_money_rounded),
+                      filled: true,
+                      fillColor: bgGray,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  
+                  TextField(
+                    controller: descController,
+                    maxLines: 2,
+                    style: GoogleFonts.cairo(),
+                    decoration: InputDecoration(
+                      labelText: "بيان المصروف (سبب الدفع)*",
+                      labelStyle: GoogleFonts.cairo(),
+                      prefixIcon: const Icon(Icons.edit_document),
+                      filled: true,
+                      fillColor: bgGray,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+
+                  InkWell(
+                    onTap: () async {
+                      final ImagePicker picker = ImagePicker();
+                      final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
+                      
+                      if (image != null) {
+                        final bytes = await image.readAsBytes();
+                        setModalState(() {
+                          selectedImageBytes = bytes;
+                          base64Image = base64Encode(bytes);
+                        });
+                      }
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(15),
+                      decoration: BoxDecoration(
+                        color: selectedImageBytes == null ? Colors.orange.shade50 : Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: selectedImageBytes == null ? Colors.orange.shade300 : Colors.green.shade300),
+                      ),
+                      child: Column(
+                        children: [
+                          Icon(selectedImageBytes == null ? Icons.camera_alt_rounded : Icons.check_circle_rounded, color: selectedImageBytes == null ? Colors.orange.shade800 : Colors.green.shade800, size: 30),
+                          const SizedBox(height: 5),
+                          Text(selectedImageBytes == null ? "التقط صورة البون الفاتورة (إجباري)*" : "تم إرفاق صورة البون بنجاح", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: selectedImageBytes == null ? Colors.orange.shade800 : Colors.green.shade800)),
+                          if (selectedImageBytes != null) ...[
+                            const SizedBox(height: 10),
+                            ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(selectedImageBytes!, height: 80, width: double.infinity, fit: BoxFit.cover))
+                          ]
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 25),
+                  
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: primaryRed, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      onPressed: isSubmitting ? null : () async {
+                        final double? amount = double.tryParse(amountController.text.trim());
+                        final String desc = descController.text.trim();
+
+                        if (amount == null || amount <= 0) {
+                          _triggerSnackBar("يرجى إدخال مبلغ صحيح");
+                          return;
+                        }
+                        if (desc.isEmpty) {
+                          _triggerSnackBar("يرجى كتابة بيان المصروف");
+                          return;
+                        }
+                        if (base64Image == null) {
+                          _triggerSnackBar("لا يمكن اعتماد المصروف بدون صورة البون!");
+                          return;
+                        }
+
+                        setModalState(() => isSubmitting = true);
+
+                        bool success = await ApiService.submitDriverExpense(amount, desc, receiptImage: base64Image);
+
+                        setModalState(() => isSubmitting = false);
+
+                        if (success) {
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          _triggerSnackBar("تم تسجيل المصروف وخصمه من الخزينة ✅");
+                          _fetchDashboardData(); 
+                        } else {
+                          _triggerSnackBar("حدث خطأ أثناء الاتصال.");
+                        }
+                      },
+                      child: isSubmitting 
+                          ? const CircularProgressIndicator(color: Colors.white) 
+                          : Text("تأكيد وخصم المصروف", style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
+                  )
+                ],
+              ),
+            );
+          }
+        );
+      }
+    );
+  }
+
   void _showOrdersListSheet(String title, Color color, IconData icon, List<dynamic> ordersList) {
     showModalBottomSheet(
       context: context,
@@ -597,13 +756,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // 🔥 فحص إذا ما كان يعمل على الويب (سطح المكتب)
     final isDesktop = kIsWeb; 
 
     return Scaffold(
       backgroundColor: softBg,
       appBar: _buildAppBar(isDesktop),
-      // 🔥 إخفاء القائمة الجانبية (Drawer) إذا كنا في الحاسوب لأنها موجودة أساساً في الـ Sidebar
       drawer: isDesktop ? null : const AdminDrawer(), 
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MasterTrackingScreen())).then((_) => _fetchDashboardData()),
@@ -619,11 +776,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // 🔥 تمرير isDesktop إلى الـ Main Content
   Widget _buildMainContent(bool isDesktop) {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-      // 🔥 تزويد الحواف الجانبية (Padding) في حال كان حاسوب لترتاح العين
       padding: EdgeInsets.fromLTRB(isDesktop ? 40 : 20, 20, isDesktop ? 40 : 20, 90), 
       children: [
         _buildWelcomeHeader(),
@@ -649,14 +804,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // 🔥 تمرير isDesktop إلى الـ AppBar
   PreferredSizeWidget _buildAppBar(bool isDesktop) {
     return AppBar(
       elevation: 0,
       backgroundColor: Colors.white,
       foregroundColor: darkBlue,
       centerTitle: true,
-      // 🔥 إخفاء أيقونة الهامبرغر ☰ إذا كنا في متصفح الويب
       leading: isDesktop ? const SizedBox.shrink() : null,
       title: Text("DANTE CLOUD", style: GoogleFonts.poppins(fontWeight: FontWeight.w800, letterSpacing: 1.2, color: primaryRed)),
       surfaceTintColor: Colors.transparent,
@@ -759,7 +912,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // 🔥 تمرير isDesktop إلى قسم الإحصائيات الفعلي
   Widget _buildRealStats(bool isDesktop) {
     final String formattedDebts = NumberFormat('#,##0.00').format(_totalMarketDebts);
     final String formattedDriversSafe = NumberFormat('#,##0.00').format(_moneyWithDriversAndCollectors);
@@ -816,7 +968,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         ),
         const SizedBox(height: 15),
         
-        // 🔥 الذكاء هنا: إذا كنا في حاسوب (isDesktop)، اجعلها 4 بطاقات بجانب بعضها، وإذا كان هاتفاً اجعلها 2 فقط
         GridView.count(
           crossAxisCount: isDesktop ? 4 : 2, 
           crossAxisSpacing: 15, 
@@ -832,16 +983,58 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               iconColor: Colors.orange.shade700,
               onTap: _showDriversMoneySheet, 
             ),
-            StatCardWidget(
-              title: "كاش الخزينة 💵", 
-              value: "$formattedCash دج", 
-              icon: Icons.payments_rounded, 
-              iconColor: Colors.green.shade600,
-              onTap: () => _showStatInfoDialog(
-                "أموال الخزينة (النقدي)", 
-                "إجمالي الأموال النقدية (الكاش) التي تم استلامها وتصفيتها في الخزينة المركزية هو ($formattedCash دج).", 
-                Icons.payments_rounded, 
-                Colors.green.shade600
+            // 🔥 تعديل بطاقة الكاش لتتضمن زر المصروفات!
+            InkWell(
+              onTap: () {
+                _showStatInfoDialog(
+                  "أموال الخزينة (النقدي)", 
+                  "إجمالي الأموال النقدية (الكاش) التي تم استلامها وتصفيتها في الخزينة المركزية هو ($formattedCash دج).", 
+                  Icons.payments_rounded, 
+                  Colors.green.shade600
+                );
+              },
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: cardBorder),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
+                ),
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(10)),
+                          child: Icon(Icons.payments_rounded, color: Colors.green.shade600, size: 22),
+                        ),
+                        // 🔥 زر المصروفات الخاص بالمدير
+                        InkWell(
+                          onTap: _showAddAdminExpenseSheet,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(6)),
+                            child: Row(
+                              children: [
+                                Icon(Icons.money_off, size: 12, color: primaryRed),
+                                const SizedBox(width: 4),
+                                Text("صرف", style: GoogleFonts.cairo(fontSize: 10, fontWeight: FontWeight.bold, color: primaryRed))
+                              ],
+                            ),
+                          ),
+                        )
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    FittedBox(fit: BoxFit.scaleDown, child: Text("$formattedCash دج", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 18, color: darkBlue))),
+                    Text("كاش الخزينة 💵", style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey.shade600, fontWeight: FontWeight.bold)),
+                  ],
+                ),
               ),
             ),
             StatCardWidget(
@@ -1155,7 +1348,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // 🔥 تمرير isDesktop إلى الـ Shimmer Loading
   Widget _buildShimmerLoading(bool isDesktop) {
     return Shimmer.fromColors(
       baseColor: Colors.grey.shade200, highlightColor: Colors.white,

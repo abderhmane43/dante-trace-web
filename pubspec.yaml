@@ -21,6 +21,9 @@ dependencies:
   badges: ^3.1.2
   shimmer: ^3.0.0
   
+  # 📸 مكتبة الكاميرا والصور (المضافة حديثاً لتسجيل البون) 🔥
+  image_picker: ^1.0.7
+  
   # 💳 المحرك الرئيسي لـ NFC
   nfc_manager: ^4.1.1
   

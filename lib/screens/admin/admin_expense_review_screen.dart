@@ -1,12 +1,12 @@
 import 'dart:convert';
+import 'dart:typed_data'; // 🔥 استيراد مهم للتعامل مع الصور (Bytes)
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb; // 🔥 استيراد مهم لفحص بيئة الويب
+import 'package:flutter/foundation.dart' show kIsWeb; 
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart'; // 🔥 استيراد مكتبة التنسيق المحاسبي
+import 'package:intl/intl.dart'; 
 
-// 🔗 تأكد من مسار خدمة الـ API الخاص بك
 import '../../services/api_service.dart';
 
 class AdminExpenseReviewScreen extends StatefulWidget {
@@ -73,12 +73,11 @@ class _AdminExpenseReviewScreenState extends State<AdminExpenseReviewScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent, // 🔥 جعلناها شفافة لعمل إطار متمركز في الويب
+      backgroundColor: Colors.transparent, 
       builder: (ctx) {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
             return Center(
-              // 🔥 تحديد عرض النافذة بـ 500 بكسل لكي تبدو أنيقة في الحاسوب ولا تتمدد
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 500),
                 child: Container(
@@ -178,6 +177,44 @@ class _AdminExpenseReviewScreenState extends State<AdminExpenseReviewScreen> {
     }
   }
 
+  // 📸 نافذة عرض البون المرفق
+  void _showReceiptImage(String base64String) {
+    try {
+      // تنظيف النص في حال كان يحتوي على ترويسة
+      final cleanBase64 = base64String.contains(',') ? base64String.split(',').last : base64String;
+      final Uint8List imageBytes = base64Decode(cleanBase64);
+
+      showDialog(
+        context: context,
+        builder: (ctx) => Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.all(10),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              InteractiveViewer(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(15),
+                  child: Image.memory(imageBytes, fit: BoxFit.contain),
+                ),
+              ),
+              Positioned(
+                top: 10,
+                right: 10,
+                child: IconButton(
+                  icon: const Icon(Icons.cancel, color: Colors.white, size: 35),
+                  onPressed: () => Navigator.pop(ctx),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      _showSnackBar("الصورة غير صالحة أو تالفة", Colors.red);
+    }
+  }
+
   void _showSnackBar(String msg, Color color) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg, style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: Colors.white)), backgroundColor: color, behavior: SnackBarBehavior.floating));
@@ -185,7 +222,7 @@ class _AdminExpenseReviewScreenState extends State<AdminExpenseReviewScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDesktop = kIsWeb; // 🔥 متغير لفحص الويب
+    final isDesktop = kIsWeb; 
 
     return Scaffold(
       backgroundColor: softBg,
@@ -195,7 +232,6 @@ class _AdminExpenseReviewScreenState extends State<AdminExpenseReviewScreen> {
         elevation: 0,
         centerTitle: true,
         iconTheme: IconThemeData(color: darkBlue),
-        // 🔥 إخفاء القائمة العلوية في الحاسوب
         leading: isDesktop ? const SizedBox.shrink() : null,
       ),
       body: RefreshIndicator(
@@ -206,21 +242,19 @@ class _AdminExpenseReviewScreenState extends State<AdminExpenseReviewScreen> {
             : _pendingExpenses.isEmpty 
                 ? _buildEmptyState()
                 : isDesktop 
-                    // 🔥 عرض الشبكة المتجاوبة للحاسوب
                     ? GridView.builder(
                         padding: const EdgeInsets.all(20),
                         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2, // عرض بطاقتين أو 3 حسب ما تراه مناسباً لحجم شاشتك
+                          crossAxisCount: 2, 
                           crossAxisSpacing: 15,
                           mainAxisSpacing: 15,
-                          childAspectRatio: 1.5, // لضبط ارتفاع البطاقة
+                          childAspectRatio: 1.5, 
                         ),
                         itemCount: _pendingExpenses.length,
                         itemBuilder: (context, index) {
                           return _buildExpenseCard(_pendingExpenses[index], isDesktop);
                         },
                       )
-                    // 🔥 عرض القائمة العادية للهاتف
                     : ListView.builder(
                         padding: const EdgeInsets.all(15),
                         physics: const AlwaysScrollableScrollPhysics(),
@@ -248,21 +282,18 @@ class _AdminExpenseReviewScreenState extends State<AdminExpenseReviewScreen> {
   }
 
   Widget _buildExpenseCard(Map<String, dynamic> exp, bool isDesktop) {
-    // 🛡️ التحويل الآمن والتنسيق المالي
     final double driverBalance = double.tryParse(exp['driver_balance']?.toString() ?? '0') ?? 0.0;
     final double requestedAmount = double.tryParse(exp['amount']?.toString() ?? '0') ?? 0.0;
     
     final String formattedRequested = NumberFormat('#,##0.00').format(requestedAmount);
     final String formattedBalance = NumberFormat('#,##0.00').format(driverBalance);
     
-    // جلب التاريخ وتنسيقه إن وجد
     String dateStr = exp['date'] != null ? exp['date'].toString().split('T')[0] : "تاريخ غير محدد";
 
-    // تنبيه إذا كان المصروف أكبر من العهدة الموجودة مع السائق
     final bool isWarning = requestedAmount > driverBalance;
+    final String? receiptImage = exp['receipt_image']; // 🔥 جلب البون من السيرفر
 
     return Container(
-      // 🔥 تصفير الهامش السفلي في الويب لأن الـ GridView يتكفل بالمسافات
       margin: EdgeInsets.only(bottom: isDesktop ? 0 : 15),
       decoration: BoxDecoration(
         color: Colors.white, 
@@ -299,9 +330,30 @@ class _AdminExpenseReviewScreenState extends State<AdminExpenseReviewScreen> {
               ],
             ),
             const Divider(height: 25),
-            Text("البيان:", style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey.shade500)),
             
-            // 🔥 استخدام Expanded لمنع تجاوز النص للمساحة في الشاشات المختلفة
+            // 🔥 عرض زر البون إذا كان مرفقاً
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text("البيان:", style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey.shade500)),
+                if (receiptImage != null && receiptImage.isNotEmpty)
+                  InkWell(
+                    onTap: () => _showReceiptImage(receiptImage),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(6)),
+                      child: Row(
+                        children: [
+                          Icon(Icons.receipt_long_rounded, size: 14, color: Colors.blue.shade800),
+                          const SizedBox(width: 4),
+                          Text("عرض البون", style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue.shade800)),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            
             Expanded(
               child: SingleChildScrollView(
                 child: Text(exp['description']?.toString() ?? "بدون بيان", style: GoogleFonts.cairo(fontSize: 15, fontWeight: FontWeight.w600, color: darkBlue)),

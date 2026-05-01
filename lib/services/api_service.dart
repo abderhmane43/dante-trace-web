@@ -188,16 +188,36 @@ class ApiService {
   // ==========================================================
   // 💰 3. المحرك المالي والمصاريف (Financial & Expenses Engine)
   // ==========================================================
-  static Future<bool> submitDriverExpense(double amount, String description) async {
+  
+  // 🔥 تم التحديث: إضافة `receiptImage` كمعامل اختياري للصرف المباشر
+  static Future<bool> submitDriverExpense(double amount, String description, {String? receiptImage}) async {
     try {
       final headers = await _getHeaders();
+      
+      // تجهيز البيانات
+      final Map<String, dynamic> bodyData = {
+        "amount": amount, 
+        "description": description
+      };
+      
+      // تضمين صورة البون (Base64) إن وُجدت
+      if (receiptImage != null && receiptImage.isNotEmpty) {
+        bodyData["receipt_image"] = receiptImage;
+      }
+
       final response = await http.post(
         Uri.parse('$baseUrl/driver/expenses'),
         headers: headers,
-        body: jsonEncode({"amount": amount, "description": description}),
+        body: jsonEncode(bodyData),
       ).timeout(const Duration(seconds: 30));
+      
+      if (response.statusCode != 200) {
+        debugPrint("🚨 Error Submitting Expense: ${response.body}");
+      }
+      
       return response.statusCode == 200;
     } catch (e) {
+      debugPrint("🚨 Exception Submitting Expense: $e");
       return false;
     }
   }

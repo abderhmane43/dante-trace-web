@@ -10,9 +10,9 @@ import 'package:dante_trace_mobile/screens/admin/agenda_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/daily_manifest_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/customer_orders_review_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/admin_fleet_screen.dart';
-import 'package:dante_trace_mobile/screens/finance/financial_settlement_screen.dart'; // 🔥 تمت إضافتها للويب
+import 'package:dante_trace_mobile/screens/finance/financial_settlement_screen.dart'; 
 import 'package:dante_trace_mobile/screens/admin/admin_expense_review_screen.dart';
-import 'package:dante_trace_mobile/screens/finance/invoices_screen.dart'; // 🔥 تمت إضافتها للويب
+import 'package:dante_trace_mobile/screens/finance/invoices_screen.dart'; 
 import 'package:dante_trace_mobile/screens/admin/sales_management_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/admin_b2b_pricing_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/customer_prices_screen.dart';
@@ -40,6 +40,7 @@ class _AdminWebDashboardState extends State<AdminWebDashboard> {
   void initState() {
     super.initState();
     // 🔥 ترتيب الشاشات هنا مطابق 100% لقائمة التطبيق الجانبية (Drawer)
+    // لاحظ أن AdminDashboardScreen في الفهرس 0 تتضمن الزر الجديد للمصروفات!
     _screens = [
       const AdminDashboardScreen(),         // 0: اللوحة الرئيسية
       const MasterTrackingScreen(),         // 1: المراقبة الشاملة للتوجيه
