@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_service.dart';
 import '../../widgets/admin/shipment_journey_timeline.dart';
 import '../../widgets/admin/verify_payment_dialog.dart';
+import '../../widgets/master_pin_dialog.dart'; // 🔥 استيراد نافذة الحارس (الرقم السري)
 
 class MasterTrackingScreen extends StatefulWidget {
   const MasterTrackingScreen({super.key});
@@ -167,7 +168,7 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
     }
   }
 
-  // 🗑️ 🔥 دالة الحذف النهائي المباشر من الرادار 🔥
+  // 🗑️ 🔥 دالة الحذف النهائي المباشر من الرادار (محمية بالكود السري 2026) 🔥
   Future<void> _deleteOrder(int orderId, String trackingNum) async {
     bool? confirm = await showDialog(
       context: context,
@@ -194,31 +195,32 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
 
     if (confirm != true) return;
 
-    // إظهار التحميل
-    showDialog(context: context, barrierDismissible: false, builder: (loadingCtx) => Center(child: CircularProgressIndicator(color: primaryRed)));
+    // 🔥 فتح نافذة الحارس لطلب الرمز السري (2026)
+    String? pin = await MasterPinDialog.show(context);
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('auth_token') ?? '';
-      
-      final response = await http.delete(
-        Uri.parse('${ApiService.baseUrl}/admin/shipments/$orderId'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
+    // إذا أدخل المدير الرمز السري
+    if (pin != null && pin.isNotEmpty) {
+      // إظهار التحميل
+      showDialog(context: context, barrierDismissible: false, builder: (loadingCtx) => Center(child: CircularProgressIndicator(color: primaryRed)));
 
-      if (!mounted) return;
-      Navigator.pop(context); // إغلاق نافذة التحميل
+      try {
+        // 🔥 إرسال طلب الحذف عبر خدمة ApiService المخصصة لضمان إرسال الـ PIN للسيرفر
+        final result = await ApiService.deleteShipment(orderId, pin);
 
-      if (response.statusCode == 200) {
-        _showSnackBar("✅ تم مسح الطلبية من النظام نهائياً 🗑️", Colors.green.shade700);
-        _fetchAllOrders(); // تحديث الرادار
-      } else {
-        _showSnackBar("❌ فشل الحذف، راجع الصلاحيات", Colors.red.shade800);
+        if (!mounted) return;
+        Navigator.pop(context); // إغلاق نافذة التحميل
+
+        if (result['success'] == true) {
+          _showSnackBar("✅ ${result['message'] ?? 'تم الحذف بنجاح'}", Colors.green.shade700);
+          _fetchAllOrders(); // تحديث الرادار
+        } else {
+          _showSnackBar("❌ ${result['message'] ?? 'فشل الحذف، تأكد من الكود السري'}", Colors.red.shade800);
+        }
+      } catch (e) {
+        if (!mounted) return;
+        Navigator.pop(context);
+        _showSnackBar("❌ حدث خطأ في الاتصال بالخادم", Colors.red.shade800);
       }
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-      _showSnackBar("❌ حدث خطأ في الاتصال بالخادم", Colors.red.shade800);
     }
   }
 
@@ -561,6 +563,8 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
                         _buildActionBtn(Icons.chat_bubble_outline_rounded, Colors.green.shade600, Colors.green.shade50, () => _launchWhatsApp(customerPhone)),
                         
                       _buildActionBtn(Icons.history_edu_rounded, primaryRed, primaryRed.withOpacity(0.05), () => _openJourneyTimeline(order)),
+                      
+                      // 🗑️ زر الحذف
                       _buildActionBtn(Icons.delete_outline_rounded, Colors.red, Colors.red.shade50, () => _deleteOrder(order['id'], trackingNum)),
                     ],
                   ),
