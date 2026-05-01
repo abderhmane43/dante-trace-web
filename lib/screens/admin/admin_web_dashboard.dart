@@ -2,23 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// 🔥 الاستيرادات المطلقة (Absolute Imports) لمنع أي تعارض (Ambiguous Import) نهائياً
+// 🔥 الاستيرادات المطلقة (Absolute Imports) مطابقة تماماً لشاشات التطبيق
 import 'package:dante_trace_mobile/screens/admin/admin_dashboard_screen.dart';
-import 'package:dante_trace_mobile/screens/admin/customer_orders_review_screen.dart';
+import 'package:dante_trace_mobile/screens/admin/master_tracking_screen.dart';
+import 'package:dante_trace_mobile/screens/admin/logistics_management_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/agenda_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/daily_manifest_screen.dart';
-import 'package:dante_trace_mobile/screens/admin/logistics_management_screen.dart';
-import 'package:dante_trace_mobile/screens/admin/master_tracking_screen.dart';
+import 'package:dante_trace_mobile/screens/admin/customer_orders_review_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/admin_fleet_screen.dart';
+import 'package:dante_trace_mobile/screens/finance/financial_settlement_screen.dart'; // 🔥 تمت إضافتها للويب
 import 'package:dante_trace_mobile/screens/admin/admin_expense_review_screen.dart';
-import 'package:dante_trace_mobile/screens/admin/sales_ledger_screen.dart';
+import 'package:dante_trace_mobile/screens/finance/invoices_screen.dart'; // 🔥 تمت إضافتها للويب
 import 'package:dante_trace_mobile/screens/admin/sales_management_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/admin_b2b_pricing_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/customer_prices_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/user_management_screen.dart';
 import 'package:dante_trace_mobile/screens/admin/add_user_screen.dart';
 
-// 🔥 استيراد شاشة تسجيل الدخول بشكل مباشر لضمان التوجيه
 import 'package:dante_trace_mobile/screens/shared/login_screen.dart';
 
 class AdminWebDashboard extends StatefulWidget {
@@ -39,25 +39,26 @@ class _AdminWebDashboardState extends State<AdminWebDashboard> {
   @override
   void initState() {
     super.initState();
+    // 🔥 ترتيب الشاشات هنا مطابق 100% لقائمة التطبيق الجانبية (Drawer)
     _screens = [
-      const AdminDashboardScreen(),         // 0
-      const CustomerOrdersReviewScreen(),   // 1
-      const AgendaScreen(),                 // 2
-      const DailyManifestScreen(),          // 3
-      const LogisticsManagementScreen(),    // 4
-      const MasterTrackingScreen(),         // 5
-      const AdminFleetScreen(),             // 6
-      const AdminExpenseReviewScreen(),     // 7
-      const SalesLedgerScreen(),            // 8
-      const SalesManagementScreen(),        // 9
-      const AdminB2BPricingScreen(),        // 10
-      const CustomerPricesScreen(),         // 11
-      const UserManagementScreen(),         // 12
-      const AddUserScreen(),                // 13
+      const AdminDashboardScreen(),         // 0: اللوحة الرئيسية
+      const MasterTrackingScreen(),         // 1: المراقبة الشاملة للتوجيه
+      const LogisticsManagementScreen(),    // 2: غرفة اللوجستيات
+      const AgendaScreen(),                 // 3: المفكرة اللوجستية
+      const DailyManifestScreen(),          // 4: تجهيز الشحنات
+      const CustomerOrdersReviewScreen(),   // 5: مراجعة طلبات الزبائن
+      const AdminFleetScreen(),             // 6: مراقبة الأسطول
+      const FinancialSettlementScreen(),    // 7: تصفية الخزينة (NFC)
+      const AdminExpenseReviewScreen(),     // 8: مراجعة مصاريف السائقين
+      const InvoicesScreen(),               // 9: سجل الفواتير والمبيعات
+      const SalesManagementScreen(),        // 10: إدارة المنتجات (المخزن)
+      const AdminB2BPricingScreen(),        // 11: تسعير الشركات
+      const CustomerPricesScreen(),         // 12: عروض الأسعار
+      const UserManagementScreen(),         // 13: قائمة المستخدمين
+      const AddUserScreen(),                // 14: إضافة مستخدم جديد
     ];
   }
 
-  // 🚪 دالة تسجيل الخروج الآمنة (تم تحديثها 🔥)
   Future<void> _handleLogout() async {
     bool? confirm = await showDialog(
       context: context,
@@ -84,12 +85,8 @@ class _AdminWebDashboardState extends State<AdminWebDashboard> {
 
     if (confirm == true) {
       final prefs = await SharedPreferences.getInstance();
-      
-      // 🔥 مسح جميع البيانات من الذاكرة لضمان عدم بقاء أي توكن معلق
       await prefs.clear(); 
-      
       if (mounted) {
-        // 🔥 التوجيه المباشر لشاشة تسجيل الدخول مع مسح كل الشاشات السابقة من الخلفية
         Navigator.pushAndRemoveUntil(
           context, 
           MaterialPageRoute(builder: (context) => const LoginScreen()), 
@@ -101,7 +98,6 @@ class _AdminWebDashboardState extends State<AdminWebDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    // 🔥 إضافة الاستجابة لحجم الشاشة (Responsive Design)
     final bool isDesktop = MediaQuery.of(context).size.width >= 900;
 
     Widget sidebarContent = Container(
@@ -140,27 +136,34 @@ class _AdminWebDashboardState extends State<AdminWebDashboard> {
               padding: const EdgeInsets.symmetric(vertical: 5),
               physics: const BouncingScrollPhysics(),
               children: [
+                // زر رئيسي للعودة للإحصائيات
+                _buildNavItem(Icons.home_rounded, "اللوحة الرئيسية (الإحصائيات)", 0),
+                
+                // ================== الفرع الأول ==================
                 _buildSectionTitle("العمليات واللوجستيات الميدانية"),
-                _buildNavItem(Icons.dashboard_rounded, "المراقبة الشاملة للتوجيه", 0),
-                _buildNavItem(Icons.inbox_rounded, "غرفة اللوجستيات والتجهيز", 1),
-                _buildNavItem(Icons.calendar_month_rounded, "المفكرة اللوجستية (Agenda)", 2),
-                _buildNavItem(Icons.picture_as_pdf_rounded, "تجهيز شحنات اليوم (PDF)", 3),
-                _buildNavItem(Icons.fact_check_rounded, "مراجعة طلبات الزبائن", 4),
+                _buildNavItem(Icons.history_edu_rounded, "المراقبة الشاملة للتوجيه 📜", 1),
+                _buildNavItem(Icons.dashboard_customize_rounded, "غرفة اللوجستيات والتجهيز", 2),
+                _buildNavItem(Icons.edit_calendar_rounded, "المفكرة اللوجستية (Agenda) 📅", 3),
+                _buildNavItem(Icons.assignment_turned_in_rounded, "تجهيز شحنات اليوم (PDF) 🚛", 4),
+                _buildNavItem(Icons.fact_check_rounded, "مراجعة طلبات الزبائن", 5),
 
+                // ================== الفرع الثاني ==================
                 _buildSectionTitle("الأسطول والمحاسبة المالية"),
-                _buildNavItem(Icons.radar_rounded, "مراقبة الأسطول (الرادار)", 5),
-                _buildNavItem(Icons.account_balance_wallet_rounded, "تصفية الخزينة (NFC)", 6),
-                _buildNavItem(Icons.payments_rounded, "مراجعة مصاريف السائقين", 7),
-                _buildNavItem(Icons.receipt_long_rounded, "سجل الفواتير والمبيعات", 8),
+                _buildNavItem(Icons.airport_shuttle_rounded, "مراقبة الأسطول (الرادار)", 6),
+                _buildNavItem(Icons.attach_money_rounded, "تصفية الخزينة (NFC)", 7),
+                _buildNavItem(Icons.price_check_rounded, "مراجعة مصاريف السائقين 💸", 8),
+                _buildNavItem(Icons.receipt_long_rounded, "سجل الفواتير والمبيعات", 9),
 
+                // ================== الفرع الثالث ==================
                 _buildSectionTitle("عملاء B2B والتسعير"),
-                _buildNavItem(Icons.inventory_2_rounded, "إدارة المنتجات (المخزن)", 9),
-                _buildNavItem(Icons.handshake_rounded, "تسعير الشركات (B2B)", 10),
-                _buildNavItem(Icons.local_offer_rounded, "عروض الأسعار الخاصة", 11),
+                _buildNavItem(Icons.inventory_2_rounded, "إدارة المنتجات (المخزن)", 10),
+                _buildNavItem(Icons.handshake_rounded, "تسعير الشركات (B2B) 🏢", 11),
+                _buildNavItem(Icons.local_offer_rounded, "عروض الأسعار الخاصة", 12),
 
+                // ================== الفرع الرابع ==================
                 _buildSectionTitle("إدارة النظام والمستخدمين"),
-                _buildNavItem(Icons.people_alt_rounded, "قائمة المستخدمين", 12),
-                _buildNavItem(Icons.person_add_alt_1_rounded, "إضافة مستخدم جديد", 13),
+                _buildNavItem(Icons.group_rounded, "قائمة المستخدمين", 13),
+                _buildNavItem(Icons.person_add_alt_1_rounded, "إضافة مستخدم جديد 👤", 14),
               ],
             ),
           ),
@@ -179,7 +182,6 @@ class _AdminWebDashboardState extends State<AdminWebDashboard> {
 
     return Scaffold(
       backgroundColor: darkBlue,
-      // 🔥 إذا كانت الشاشة صغيرة نظهر زر القائمة (Hamburger Menu)
       appBar: isDesktop ? null : AppBar(
         backgroundColor: darkBlue,
         foregroundColor: Colors.white,
@@ -190,12 +192,8 @@ class _AdminWebDashboardState extends State<AdminWebDashboard> {
       drawer: isDesktop ? null : Drawer(child: sidebarContent),
       body: Row(
         children: [
-          // 🔥 إذا كانت الشاشة كبيرة نظهر القائمة الجانبية ثابتة
           if (isDesktop) sidebarContent,
           
-          // =========================================================
-          // 2. المحتوى (Main Workspace)
-          // =========================================================
           Expanded(
             child: Container(
               margin: EdgeInsets.only(top: isDesktop ? 10 : 0, bottom: isDesktop ? 10 : 0, left: isDesktop ? 10 : 0, right: isDesktop ? 0 : 0),
@@ -234,7 +232,6 @@ class _AdminWebDashboardState extends State<AdminWebDashboard> {
       title: Text(title, style: GoogleFonts.cairo(color: isSelected ? Colors.white : Colors.white70, fontSize: 13, fontWeight: isSelected ? FontWeight.bold : FontWeight.w600)),
       onTap: () {
         setState(() => _selectedIndex = index);
-        // 🔥 إغلاق القائمة تلقائياً في الشاشات الصغيرة عند اختيار شاشة
         if (MediaQuery.of(context).size.width < 900 && Navigator.canPop(context)) {
           Navigator.pop(context);
         }
