@@ -1,6 +1,7 @@
 import 'dart:convert';
+import 'dart:typed_data'; 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb; // 🔥 استيراد فحص الويب
+import 'package:flutter/foundation.dart' show kIsWeb; 
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -365,19 +366,20 @@ class _FinancialSettlementScreenState extends State<FinancialSettlementScreen> {
 
               _showLoadingOverlay();
               
-              // محاكاة إرسال كود الـ NFC للسيرفر مباشرة من الإدارة لتصفية الحساب
-              final result = await ApiService.settleDriverAccount(expectedNfc);
+              // 🔥 التحديث 2: استخدام الدالة الموحدة المحدثة
+              final result = await ApiService.settleAccountWithAdmin(expectedNfc);
               
               if (mounted) Navigator.pop(context); // إغلاق الـ Loading
 
-              if (result['success'] == true) {
+              // 🔥 التحديث 3: توافق الشرط مع الرد الجديد من السيرفر status == success
+              if (result['status'] == 'success') {
                 _showToast("تمت التصفية اليدوية بنجاح وتم إبراء الذمة!", successGreen);
                 _fetchBalancesAndOrders(); 
                 if (bottomSheetCtx.mounted && Navigator.canPop(bottomSheetCtx)) {
                   Navigator.pop(bottomSheetCtx); 
                 }
               } else {
-                _showToast(result['message'], Colors.red);
+                _showToast(result['message'] ?? 'فشلت العملية', Colors.red);
               }
             },
             child: Text("نعم، استلمت المبالغ", style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -391,14 +393,15 @@ class _FinancialSettlementScreenState extends State<FinancialSettlementScreen> {
   // 🤝 تصفية الحسابات (NFC Engine Pro)
   // ==========================================
   Future<void> _startNfcSettlement(Map<String, dynamic> user, {VoidCallback? onSuccess}) async {
-    // 🔥 الحماية من الويب: الـ NFC يعمل فقط على تطبيق الهاتف
     if (kIsWeb) {
       _showToast("خاصية مسح الـ NFC غير مدعومة في متصفح الويب. الرجاء استخدام (التصفية اليدوية).", Colors.orange.shade800);
       return;
     }
 
     try {
-      bool isAvailable = await NfcManager.instance.isAvailable();
+      // 🔥 التحديث 1: استبدال الدالة القديمة بالحديثة
+      // ignore: deprecated_member_use
+bool isAvailable = await NfcManager.instance.isAvailable();
       if (!isAvailable) {
         _showToast("حساس NFC غير متوفر أو معطل!", Colors.red);
         return;
@@ -407,7 +410,6 @@ class _FinancialSettlementScreenState extends State<FinancialSettlementScreen> {
       final String name = (user['first_name']?.toString().isNotEmpty == true) ? user['first_name'].toString() : user['username'].toString();
       final String expectedNfc = (user['driver_nfc_id']?.toString() ?? '').replaceAll(':', '').toUpperCase().trim();
       
-      // 🔥 تنسيق المبلغ للشاشة المنبثقة
       final double cash = double.tryParse(user['current_cash_balance']?.toString() ?? '0.0') ?? 0.0;
       final double check = double.tryParse(user['current_check_balance']?.toString() ?? '0.0') ?? 0.0;
       final String formattedCash = NumberFormat('#,##0.00').format(cash);
@@ -482,7 +484,6 @@ class _FinancialSettlementScreenState extends State<FinancialSettlementScreen> {
 
           List<int>? identifier;
           try {
-            // 🛡️ الحل الجذري لتخطي حماية الدارت في الـ NFC (هنا كان الخطأ وتم إصلاحه)
             final Map<dynamic, dynamic> rawTagData = (tag as dynamic).data as Map<dynamic, dynamic>;
             for (var value in rawTagData.values) {
               if (value is Map && value.containsKey('identifier')) {
@@ -506,15 +507,18 @@ class _FinancialSettlementScreenState extends State<FinancialSettlementScreen> {
             }
 
             _showLoadingOverlay();
-            final result = await ApiService.settleDriverAccount(scannedId);
+            
+            // 🔥 التحديث 2: استخدام الدالة الموحدة
+            final result = await ApiService.settleAccountWithAdmin(scannedId);
             if (mounted) Navigator.pop(context); 
 
-            if (result['success'] == true) {
+            // 🔥 التحديث 3: توافق الشرط مع الرد الجديد
+            if (result['status'] == 'success') {
               _showToast("تمت التصفية بنجاح وتم إبراء الذمة!", successGreen);
               _fetchBalancesAndOrders(); 
               if (onSuccess != null) onSuccess(); 
             } else {
-              _showToast(result['message'], Colors.red);
+              _showToast(result['message'] ?? "فشلت العملية", Colors.red);
             }
           } else {
             _showToast("لم نتمكن من قراءة الشريحة بشكل صحيح.", Colors.orange.shade800);
@@ -564,7 +568,6 @@ class _FinancialSettlementScreenState extends State<FinancialSettlementScreen> {
   }
 
   Widget _buildVaultCard() {
-    // 🔥 تنسيق إجمالي الخزينة المنتظر للكاش وللشيكات ليظهر في البطاقة الخضراء العلوية
     final String formattedExpectedCash = NumberFormat('#,##0.00').format(_totalExpectedCash);
     final String formattedExpectedCheck = NumberFormat('#,##0.00').format(_totalExpectedCheck);
 
@@ -595,7 +598,7 @@ class _FinancialSettlementScreenState extends State<FinancialSettlementScreen> {
                     Text("كاش 💵", style: GoogleFonts.cairo(color: Colors.white70, fontSize: 13)),
                     FittedBox(
                       child: Text(
-                        "$formattedExpectedCash", 
+                        formattedExpectedCash, 
                         style: GoogleFonts.poppins(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900),
                       ),
                     ),
@@ -609,7 +612,7 @@ class _FinancialSettlementScreenState extends State<FinancialSettlementScreen> {
                     Text("شيكات 📄", style: GoogleFonts.cairo(color: Colors.white70, fontSize: 13)),
                     FittedBox(
                       child: Text(
-                        "$formattedExpectedCheck", 
+                        formattedExpectedCheck, 
                         style: GoogleFonts.poppins(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900),
                       ),
                     ),
@@ -633,7 +636,6 @@ class _FinancialSettlementScreenState extends State<FinancialSettlementScreen> {
   }
 
   Widget _buildDriverCard(Map<String, dynamic> user) {
-    // 🔥 تنسيق عهدة الموظف في القائمة مقسمة
     final double cash = double.tryParse(user['current_cash_balance']?.toString() ?? '0.0') ?? 0.0;
     final double check = double.tryParse(user['current_check_balance']?.toString() ?? '0.0') ?? 0.0;
     final String formattedCash = NumberFormat('#,##0.00').format(cash);

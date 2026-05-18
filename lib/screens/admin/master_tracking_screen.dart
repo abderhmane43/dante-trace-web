@@ -67,8 +67,11 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
           setState(() {
             // ترتيب بحيث تظهر الطلبيات التي تحتاج مراجعة في الأعلى
             data.sort((a, b) {
-              if (a['payment_status'] == 'pending_admin_verification' && b['payment_status'] != 'pending_admin_verification') return -1;
-              if (b['payment_status'] == 'pending_admin_verification' && a['payment_status'] != 'pending_admin_verification') return 1;
+              bool aNeedsVerify = a['payment_status'] == 'pending_admin_verification' || a['payment_status'] == 'pending_debt_verification';
+              bool bNeedsVerify = b['payment_status'] == 'pending_admin_verification' || b['payment_status'] == 'pending_debt_verification';
+              
+              if (aNeedsVerify && !bNeedsVerify) return -1;
+              if (bNeedsVerify && !aNeedsVerify) return 1;
               return (b['id'] as int).compareTo(a['id'] as int);
             });
             
@@ -103,12 +106,12 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
         } else if (_selectedFilter == 'delivered_group') {
           // لا تشمل الطلبيات التي صرح بها الزبون وتنتظر المراجعة هنا
           return (status == 'delivered' || status == 'delivered_unpaid' || status == 'assigned_to_collector') 
-                 && paymentStatus != 'pending_admin_verification';
+                 && paymentStatus != 'pending_admin_verification' && paymentStatus != 'pending_debt_verification';
         } else if (_selectedFilter == 'settled_group') {
           return status == 'settled_with_collector' || status == 'settled';
         } else if (_selectedFilter == 'verification_group') {
-          // 🔥 فلتر جديد خاص بالمراجعات المالية فقط
-          return paymentStatus == 'pending_admin_verification';
+          // 🔥 فلتر يظهر المراجعات المالية والدين
+          return paymentStatus == 'pending_admin_verification' || paymentStatus == 'pending_debt_verification';
         }
         return true;
       }).toList();
@@ -128,6 +131,198 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
     setState(() {
       _filteredOrders = temp;
     });
+  }
+
+  // =========================================================================
+  // 🛡️ نافذة الإدارة للتحقق من الديون وتأكيدها بدعم الدفع الجزئي الذكي 🔥
+  // =========================================================================
+  void _showDebtVerificationDialog(Map<String, dynamic> order) {
+    int? selectedActualDriverId;
+    bool paidToAdminDirectly = false;
+    bool isSubmitting = false;
+    List<dynamic> availableDrivers = [];
+    bool isLoadingDrivers = true;
+    
+    // 🔥 الحقل الذي سيسمح للمدير بكتابة المبلغ الذي استلمه فعلياً (الدفع الجزئي)
+    TextEditingController amountCtrl = TextEditingController();
+    double totalRequired = double.tryParse(order['cash_amount']?.toString() ?? '0') ?? 0.0;
+    
+    amountCtrl.text = totalRequired.toStringAsFixed(0);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          
+          if (isLoadingDrivers && availableDrivers.isEmpty) {
+            // جلب السائقين
+            ApiService.getActiveDrivers().then((drivers) {
+              if (mounted) {
+                setDialogState(() {
+                  availableDrivers = drivers;
+                  isLoadingDrivers = false;
+                });
+              }
+            });
+            
+            // 🔥 محاولة جلب المبلغ الجزئي الذي صرح به الزبون من السجل
+            SharedPreferences.getInstance().then((prefs) {
+              final token = prefs.getString('auth_token') ?? '';
+              http.get(
+                Uri.parse('${ApiService.baseUrl}/admin/orders/${order['id']}/history'),
+                headers: {'Authorization': 'Bearer $token'},
+              ).then((response) {
+                if (response.statusCode == 200) {
+                  List<dynamic> history = jsonDecode(utf8.decode(response.bodyBytes));
+                  var declaration = history.reversed.firstWhere(
+                    (h) => h['action'] != null && (h['action'].toString().contains('دين') || h['action'].toString().contains('تصريح')), 
+                    orElse: () => null
+                  );
+                  if (declaration != null) {
+                    String notes = declaration['notes'] ?? '';
+                    RegExp amountReg = RegExp(r'([0-9]*\.?[0-9]+)');
+                    var match = amountReg.firstMatch(notes);
+                    if (match != null) {
+                      double declared = double.tryParse(match.group(1)!) ?? 0.0;
+                      if (declared > 0 && mounted) {
+                        setDialogState(() {
+                          amountCtrl.text = declared.toStringAsFixed(0); // تحديث الحقل بما كتبه الزبون
+                        });
+                      }
+                    }
+                  }
+                }
+              });
+            });
+          }
+
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Row(
+              children: [
+                Icon(Icons.shield_rounded, color: Colors.red.shade900),
+                const SizedBox(width: 10),
+                Text("مراجعة تسديد دين", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 16)),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.red.shade200)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("الزبون: ${order['customer_name']}", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.red.shade900)),
+                        Text("إجمالي الدين المعلق: ${NumberFormat('#,##0.00').format(totalRequired)} دج", style: GoogleFonts.poppins(fontSize: 12, color: Colors.red.shade700)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  
+                  Text("المبلغ الذي استلمته فعلياً لتسديد الدين (دج):", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.green.shade800)),
+                  const SizedBox(height: 5),
+                  TextField(
+                    controller: amountCtrl,
+                    keyboardType: TextInputType.number,
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16),
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.money, color: Colors.green),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                      filled: true,
+                      fillColor: Colors.green.shade50
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+
+                  Text("من الذي استلم هذا المبلغ فعلياً؟", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 14, color: const Color(0xFF1E293B))),
+                  const SizedBox(height: 10),
+
+                  Container(
+                    decoration: BoxDecoration(color: paidToAdminDirectly ? Colors.green.shade50 : const Color(0xFFF4F7F9), borderRadius: BorderRadius.circular(12), border: Border.all(color: paidToAdminDirectly ? Colors.green.shade300 : Colors.grey.shade300)),
+                    child: CheckboxListTile(
+                      title: Text("استلمته أنا (خزينة الإدارة مباشرة)", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 12, color: paidToAdminDirectly ? Colors.green.shade800 : Colors.black87)),
+                      value: paidToAdminDirectly,
+                      activeColor: Colors.green.shade700,
+                      onChanged: (val) {
+                        setDialogState(() {
+                          paidToAdminDirectly = val ?? false;
+                          if (paidToAdminDirectly) selectedActualDriverId = null;
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  
+                  if (!paidToAdminDirectly) ...[
+                    Text("أو اختر السائق/المحصل المُستلم:", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey.shade700)),
+                    const SizedBox(height: 5),
+                    isLoadingDrivers 
+                      ? const Center(child: CircularProgressIndicator())
+                      : Container(
+                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.blue.shade200)),
+                          child: DropdownButtonFormField<int>(
+                            decoration: const InputDecoration(border: InputBorder.none, contentPadding: EdgeInsets.symmetric(horizontal: 15, vertical: 5)),
+                            hint: Text("اختر السائق المُستلم...", style: GoogleFonts.cairo(fontSize: 13)),
+                            value: selectedActualDriverId,
+                            items: availableDrivers.map((d) {
+                              return DropdownMenuItem<int>(
+                                value: d['id'],
+                                child: Text("${d['name']} (${d['phone'] ?? 'بدون هاتف'})", style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
+                              );
+                            }).toList(),
+                            onChanged: (val) => setDialogState(() => selectedActualDriverId = val),
+                          ),
+                        ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: Text("إلغاء", style: GoogleFonts.cairo(color: Colors.grey, fontWeight: FontWeight.bold))),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade800, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                onPressed: (isSubmitting || (!paidToAdminDirectly && selectedActualDriverId == null)) ? null : () async {
+                  
+                  double finalAmount = double.tryParse(amountCtrl.text) ?? 0.0;
+                  if (finalAmount <= 0) {
+                    _showSnackBar("يرجى إدخال مبلغ صحيح!", Colors.orange);
+                    return;
+                  }
+
+                  setDialogState(() => isSubmitting = true);
+                  
+                  bool success = await ApiService.adminVerifyDebt(
+                    order['id'], 
+                    finalAmount, 
+                    actualDriverId: selectedActualDriverId, 
+                    paidToAdminDirectly: paidToAdminDirectly
+                  );
+                  
+                  if (!mounted) return;
+                  if (success) {
+                    Navigator.pop(ctx);
+                    _showSnackBar("✅ تمت المطابقة بنجاح وتم تسجيل الأموال!", Colors.green.shade700);
+                    _fetchAllOrders();
+                  } else {
+                    setDialogState(() => isSubmitting = false);
+                    _showSnackBar("❌ حدث خطأ أثناء المطابقة", Colors.red);
+                  }
+                },
+                child: isSubmitting 
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : Text("تأكيد واعتماد الدفع", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: Colors.white)),
+              )
+            ],
+          );
+        }
+      )
+    );
   }
 
   // 📜 فتح نافذة السجل الزمني التفصيلي
@@ -195,16 +390,14 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
 
     if (confirm != true) return;
 
-    // 🔥 فتح نافذة الحارس لطلب الرمز السري (2026)
+    // 🔥 فتح نافذة الحارس لطلب الرمز السري
     String? pin = await MasterPinDialog.show(context);
 
     // إذا أدخل المدير الرمز السري
     if (pin != null && pin.isNotEmpty) {
-      // إظهار التحميل
       showDialog(context: context, barrierDismissible: false, builder: (loadingCtx) => Center(child: CircularProgressIndicator(color: primaryRed)));
 
       try {
-        // 🔥 إرسال طلب الحذف عبر خدمة ApiService المخصصة لضمان إرسال الـ PIN للسيرفر
         final result = await ApiService.deleteShipment(orderId, pin);
 
         if (!mounted) return;
@@ -424,7 +617,6 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
     );
   }
 
-  // 🔥 إضافة متغير isDesktop للتحكم بالهوامش
   Widget _buildOrderCard(Map<String, dynamic> order, {bool isDesktop = false}) {
     final String status = order['delivery_status']?.toString() ?? 'pending';
     final String paymentStatus = order['payment_status']?.toString() ?? 'unpaid';
@@ -433,6 +625,7 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
     final String customerPhone = order['customer_phone']?.toString() ?? '';
     
     final bool needsPaymentVerification = (paymentStatus == 'pending_admin_verification');
+    final bool isDebtUnderReview = (paymentStatus == 'pending_debt_verification'); // 🔥 استشعار وجود مراجعة دين
     
     String dateStr = "غير محدد";
     if (order['created_at'] != null) {
@@ -447,6 +640,8 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
 
     if (needsPaymentVerification) {
       statusColor = Colors.orange.shade700; statusLabel = 'تأكيد الدفع ⏳';
+    } else if (isDebtUnderReview) {
+      statusColor = Colors.red.shade700; statusLabel = 'مراجعة الدين 🛑'; // 🔥 بادج للدين
     } else if (status == 'delivered' && paymentStatus == 'awaiting_customer_payment') {
       statusColor = Colors.red.shade600; statusLabel = 'ينتظر الزبون';
     } else if (status.contains('pending') || status == 'approved') {
@@ -464,12 +659,11 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
     }
 
     return Container(
-      // 🔥 إزالة الهامش السفلي في حالة الكمبيوتر لأن الـ Wrap يتكفل بالمساحات
       margin: EdgeInsets.only(bottom: isDesktop ? 0 : 15),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: needsPaymentVerification ? Colors.orange.shade300 : Colors.grey.shade200, width: needsPaymentVerification ? 2 : 1),
+        border: Border.all(color: (needsPaymentVerification || isDebtUnderReview) ? Colors.orange.shade300 : Colors.grey.shade200, width: (needsPaymentVerification || isDebtUnderReview) ? 2 : 1),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Padding(
@@ -479,8 +673,8 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: needsPaymentVerification ? Colors.orange.shade50 : darkBlue.withOpacity(0.05), shape: BoxShape.circle),
-              child: Icon(needsPaymentVerification ? Icons.receipt_long_rounded : Icons.local_shipping_outlined, color: needsPaymentVerification ? Colors.orange.shade800 : darkBlue, size: 20),
+              decoration: BoxDecoration(color: (needsPaymentVerification || isDebtUnderReview) ? Colors.orange.shade50 : darkBlue.withOpacity(0.05), shape: BoxShape.circle),
+              child: Icon((needsPaymentVerification || isDebtUnderReview) ? Icons.receipt_long_rounded : Icons.local_shipping_outlined, color: (needsPaymentVerification || isDebtUnderReview) ? Colors.orange.shade800 : darkBlue, size: 20),
             ),
             const SizedBox(width: 15),
             
@@ -558,13 +752,30 @@ class _MasterTrackingScreenState extends State<MasterTrackingScreen> {
                             ),
                           ),
                         ),
+
+                      // 🔥 زر مراجعة الديون في الرادار الشامل
+                      if (isDebtUnderReview)
+                        InkWell(
+                          onTap: () => _showDebtVerificationDialog(order),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.red.shade300)),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.shield_rounded, color: Colors.red, size: 14),
+                                const SizedBox(width: 4),
+                                Text("مراجعة الدفع (دين)", style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.red.shade900, height: 1)),
+                              ],
+                            ),
+                          ),
+                        ),
                         
-                      if (customerPhone.isNotEmpty && !needsPaymentVerification)
+                      if (customerPhone.isNotEmpty && !needsPaymentVerification && !isDebtUnderReview)
                         _buildActionBtn(Icons.chat_bubble_outline_rounded, Colors.green.shade600, Colors.green.shade50, () => _launchWhatsApp(customerPhone)),
                         
                       _buildActionBtn(Icons.history_edu_rounded, primaryRed, primaryRed.withOpacity(0.05), () => _openJourneyTimeline(order)),
                       
-                      // 🗑️ زر الحذف
                       _buildActionBtn(Icons.delete_outline_rounded, Colors.red, Colors.red.shade50, () => _deleteOrder(order['id'], trackingNum)),
                     ],
                   ),

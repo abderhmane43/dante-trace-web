@@ -85,7 +85,7 @@ class ApiService {
   }
 
   // ==========================================================
-  // 🏢 2. إدارة المستخدمين (HR & Users)
+  // 🏢 2. إدارة المستخدمين والأسطول (HR & Users & Fleet)
   // ==========================================================
   static Future<List<dynamic>> getAllUsers() async {
     try {
@@ -113,6 +113,17 @@ class ApiService {
     } catch (e) {
       debugPrint("Error fetching profile: $e");
       return null;
+    }
+  }
+
+  static Future<List<dynamic>> getFleetStatus() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(Uri.parse('$baseUrl/admin/fleet'), headers: headers).timeout(const Duration(seconds: 30));
+      return response.statusCode == 200 ? jsonDecode(utf8.decode(response.bodyBytes)) : [];
+    } catch (e) {
+      debugPrint("Error fetching fleet status: $e");
+      return [];
     }
   }
 
@@ -165,7 +176,6 @@ class ApiService {
     }
   }
 
-  // 🔥 دالة حذف مستخدم (محمية برمز المدير)
   static Future<Map<String, dynamic>> deleteUser(int userId, String masterPin) async {
     try {
       final headers = await _getHeaders();
@@ -189,18 +199,15 @@ class ApiService {
   // 💰 3. المحرك المالي والمصاريف (Financial & Expenses Engine)
   // ==========================================================
   
-  // 🔥 تم التحديث: إضافة `receiptImage` كمعامل اختياري للصرف المباشر
   static Future<bool> submitDriverExpense(double amount, String description, {String? receiptImage}) async {
     try {
       final headers = await _getHeaders();
       
-      // تجهيز البيانات
       final Map<String, dynamic> bodyData = {
         "amount": amount, 
         "description": description
       };
       
-      // تضمين صورة البون (Base64) إن وُجدت
       if (receiptImage != null && receiptImage.isNotEmpty) {
         bodyData["receipt_image"] = receiptImage;
       }
@@ -209,7 +216,7 @@ class ApiService {
         Uri.parse('$baseUrl/driver/expenses'),
         headers: headers,
         body: jsonEncode(bodyData),
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 60)); 
       
       if (response.statusCode != 200) {
         debugPrint("🚨 Error Submitting Expense: ${response.body}");
@@ -319,7 +326,6 @@ class ApiService {
     }
   }
 
-  // 🔥 دالة حذف منتج (محمية برمز المدير)
   static Future<Map<String, dynamic>> deleteProduct(int productId, String masterPin) async {
     try {
       final headers = await _getHeaders();
@@ -368,7 +374,6 @@ class ApiService {
   // 📦 5. إدارة الطلبيات والسائقين (Logistics, Split & Schedule)
   // ==========================================================
   
-  // 🔥 دالة حذف طلبية (محمية برمز المدير)
   static Future<Map<String, dynamic>> deleteShipment(int shipmentId, String masterPin) async {
     try {
       final headers = await _getHeaders();
@@ -530,7 +535,7 @@ class ApiService {
   static Future<Map<String, dynamic>?> getDashboardStats() async {
     try {
       final headers = await _getHeaders();
-      final response = await http.get(Uri.parse('$baseUrl/dashboard/'), headers: headers)
+      final response = await http.get(Uri.parse('$baseUrl/admin/dashboard-stats'), headers: headers)
           .timeout(const Duration(seconds: 30));
       if (response.statusCode == 200) return jsonDecode(utf8.decode(response.bodyBytes)); 
       return null;
@@ -585,7 +590,7 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> settleDriverAccount(String driverNfcId) async {
+  static Future<Map<String, dynamic>> settleAccountWithAdmin(String driverNfcId) async {
     try {
       final headers = await _getHeaders();
       final response = await http.put(
@@ -596,17 +601,17 @@ class ApiService {
       
       final data = jsonDecode(utf8.decode(response.bodyBytes));
       if (response.statusCode == 200) {
-        return {"success": true, "message": data['message'] ?? "تمت التصفية بنجاح", "data": data};
+        return {"status": "success", "message": data['message'] ?? "تمت التصفية بنجاح", "data": data};
       } else {
-        return {"success": false, "message": data['detail'] ?? "فشل الاتصال"};
+        return {"status": "error", "message": data['detail'] ?? "فشل الاتصال أو البطاقة غير صحيحة"};
       }
     } catch (e) {
-      return {"success": false, "message": "خطأ في الشبكة: $e"};
+      return {"status": "error", "message": "خطأ في الشبكة، يرجى المحاولة لاحقاً"};
     }
   }
 
   // ==========================================================
-  // 💸 8. النظام المالي الجديد (تصريح الزبون وتأكيد الإدارة) 🔥
+  // 💸 8. النظام المالي الجديد (تصريح الزبون وتأكيد الإدارة)
   // ==========================================================
   static Future<bool> customerDeclarePayment(int shipmentId, List<Map<String, dynamic>> payments) async {
     try {
@@ -615,7 +620,7 @@ class ApiService {
         Uri.parse('$baseUrl/customer/shipments/$shipmentId/declare-payment'),
         headers: headers,
         body: jsonEncode({"payments": payments}),
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 60)); 
 
       if (response.statusCode != 200) {
         debugPrint("🚨 Error Declaring Payment: ${response.body}");
@@ -627,7 +632,7 @@ class ApiService {
     }
   }
 
-  static Future<bool> adminVerifyPayment(int shipmentId, double cash, double check) async {
+  static Future<bool> adminVerifyPayment(int shipmentId, double cash, double check, double debt) async {
     try {
       final headers = await _getHeaders();
       final response = await http.put(
@@ -635,7 +640,8 @@ class ApiService {
         headers: headers,
         body: jsonEncode({
           "cash_received": cash,
-          "check_received": check
+          "check_received": check,
+          "debt_amount": debt 
         })
       ).timeout(const Duration(seconds: 30));
 
@@ -732,18 +738,170 @@ class ApiService {
   }
 
   // ==========================================================
-  // 🛡️ 10. نظام الحارس (Version Checker)
+  // 🛑 10. الدائرة المحكمة لتسديد الديون (Zero-Loophole Debt Management)
+  // ==========================================================
+
+  static Future<List<dynamic>> getActiveDrivers() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/customer/active-drivers'), 
+        headers: headers
+      ).timeout(const Duration(seconds: 30));
+      if (response.statusCode == 200) {
+        return jsonDecode(utf8.decode(response.bodyBytes));
+      }
+      return [];
+    } catch (e) {
+      debugPrint("Error fetching active drivers: $e");
+      return [];
+    }
+  }
+
+  // 🔥 الدالة المحدثة لتدعم الشيكات من جهة الزبون
+  static Future<bool> customerDeclareDebt(
+    int shipmentId, 
+    double amountCash, 
+    double amountCheck, 
+    {int? driverId, bool paidToAdminDirectly = false, String? checkOwner, String? checkNum, String? checkFile, String notes = ""}
+  ) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.post(
+        Uri.parse('$baseUrl/customer/shipments/$shipmentId/declare-debt'),
+        headers: headers,
+        body: jsonEncode({
+          "driver_id": driverId,
+          "paid_to_admin_directly": paidToAdminDirectly,
+          "amount_cash": amountCash,
+          "amount_check": amountCheck,
+          "check_owner": checkOwner,
+          "check_number": checkNum,
+          "check_file": checkFile,
+          "notes": notes
+        }),
+      ).timeout(const Duration(seconds: 30));
+      if (response.statusCode != 200) {
+        debugPrint("🚨 Error Declaring Debt: ${response.body}");
+      }
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint("🚨 Exception Declaring Debt: $e");
+      return false;
+    }
+  }
+
+  static Future<bool> adminVerifyDebt(int shipmentId, double approvedCash, {double approvedCheck = 0.0, int? actualDriverId, bool paidToAdminDirectly = false}) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.put(
+        Uri.parse('$baseUrl/admin/shipments/$shipmentId/verify-debt'),
+        headers: headers,
+        body: jsonEncode({
+          "actual_driver_id": actualDriverId,
+          "approved_cash": approvedCash,       
+          "approved_check": approvedCheck,     
+          "paid_to_admin_directly": paidToAdminDirectly
+        }),
+      ).timeout(const Duration(seconds: 30));
+      
+      if (response.statusCode != 200) {
+        debugPrint("🚨 Error Verifying Debt: ${response.body}");
+      }
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint("🚨 Exception Verifying Debt: $e");
+      return false;
+    }
+  }
+
+  // 🔥 دالة رفض تصريح سداد الدين
+  static Future<bool> adminRejectDebt(int shipmentId, String reason) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.put(
+        Uri.parse('$baseUrl/admin/shipments/$shipmentId/reject-debt'),
+        headers: headers,
+        body: jsonEncode({
+          "reason": reason.isEmpty ? "بيانات الدفع غير صحيحة، يرجى مراجعتها وإعادة الإرسال." : reason
+        })
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode != 200) {
+        debugPrint("🚨 Error Rejecting Debt: ${response.body}");
+      }
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint("🚨 Exception Rejecting Debt: $e");
+      return false;
+    }
+  }
+
+  // ==========================================================
+  // 📚 جلب سجل الديون والبحث الشامل (Archive)
+  // ==========================================================
+  
+  static Future<Map<String, dynamic>> getCustomerDebts() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/customer/my-debts'), 
+        headers: headers
+      ).timeout(const Duration(seconds: 30));
+      
+      if (response.statusCode == 200) {
+        return jsonDecode(utf8.decode(response.bodyBytes));
+      }
+      return {"total_debt": 0.0, "debts": []};
+    } catch (e) {
+      debugPrint("Error fetching customer debts: $e");
+      return {"total_debt": 0.0, "debts": []};
+    }
+  }
+
+  static Future<List<dynamic>> getAllDebtsAdmin() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/admin/all-debts'), 
+        headers: headers
+      ).timeout(const Duration(seconds: 30));
+      
+      if (response.statusCode == 200) {
+        return jsonDecode(utf8.decode(response.bodyBytes));
+      }
+      return [];
+    } catch (e) {
+      debugPrint("Error fetching admin debts: $e");
+      return [];
+    }
+  }
+
+  // 🔥 دالة البحث الشامل عن الطلبيات (الأرشيف)
+  static Future<List<dynamic>> searchAllOrders(String query) async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    
+    if (token == null) throw Exception("User not authenticated");
+
+    final url = Uri.parse('$baseUrl/admin/search-orders?query=${Uri.encodeComponent(query)}');
+    final response = await http.get(url, headers: {'Authorization': 'Bearer $token'}).timeout(const Duration(seconds: 30));
+
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    } else {
+      throw Exception("Failed to search orders: ${response.body}");
+    }
+  }
+
+  // ==========================================================
+  // 🛡️ 11. نظام الحارس (Version Checker)
   // ==========================================================
   static Future<String> getRequiredAppVersion() async {
     try {
-      // 💡 مستقبلاً يمكنك جلب هذا الرقم عبر API من قاعدة البيانات
-      // final response = await http.get(Uri.parse('$baseUrl/config/version'));
-      // return jsonDecode(response.body)['required_version'];
-      
-      // حالياً، قم بتغيير هذا الرقم يدوياً عندما ترفع APK جديد في الواتساب
       return "1.0.0"; 
     } catch (e) {
-      return "1.0.0"; // افتراضي في حالة تعذر الاتصال لتجنب إغلاق التطبيق بالخطأ
+      return "1.0.0"; 
     }
   }
 }

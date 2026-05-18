@@ -9,11 +9,12 @@ import 'package:local_auth/local_auth.dart';
 
 // 🔥 المسارات المطلقة
 import 'package:dante_trace_mobile/services/api_service.dart';
+import 'package:dante_trace_mobile/services/biometric_auth_service.dart'; // 🔥 استيراد خدمة البصمة
 import 'package:dante_trace_mobile/screens/admin/admin_dashboard_screen.dart'; 
-import 'package:dante_trace_mobile/screens/admin/admin_web_dashboard.dart'; // 🔥 استيراد لوحة تحكم الويب الجديدة
+import 'package:dante_trace_mobile/screens/admin/admin_web_dashboard.dart'; 
 import 'package:dante_trace_mobile/screens/customer/customer_dashboard_screen.dart'; 
 import 'package:dante_trace_mobile/screens/driver/driver_dashboard_screen.dart';   
-import 'package:dante_trace_mobile/screens/collector/collector_dashboard_screen.dart';
+import 'package:dante_trace_mobile/screens/collector/collector_dashboard_screen.dart'; // 🔥 استيراد شاشة المحصل الجديدة
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -44,12 +45,11 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
   // 🔐 أدوات التشفير والبصمة
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
-  
-  // 🔥 حماية الويب: جعلنا البصمة Nullable لكي لا ينهار المتصفح
-  final LocalAuthentication? _localAuth = kIsWeb ? null : LocalAuthentication();
+  final BiometricAuthService _biometricService = BiometricAuthService(); // 🔥 تهيئة خدمة البصمة
   
   // قائمة الحسابات المحفوظة
   Map<String, dynamic> _savedAccounts = {};
+  bool _isBiometricAvailable = false; // هل الجهاز يدعم البصمة؟
 
   @override
   void initState() {
@@ -58,7 +58,16 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(parent: _animController, curve: Curves.easeIn));
     _animController.forward();
     
-    _loadSavedAccounts();
+    _initializeAuth();
+  }
+
+  // 🔥 دالة التهيئة الأولية
+  Future<void> _initializeAuth() async {
+    await _loadSavedAccounts();
+    if (!kIsWeb) {
+      _isBiometricAvailable = await _biometricService.checkBiometrics();
+      setState(() {});
+    }
   }
 
   @override
@@ -115,30 +124,20 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   Future<void> _authenticateAndFill(String username, String password) async {
     if (!kIsWeb) HapticFeedback.lightImpact();
     
-    // 🔥 حماية قوية: تخطي البصمة فوراً إذا كنا على الويب
-    if (kIsWeb || _localAuth == null) {
+    // تخطي البصمة للويب أو إذا كانت البصمة غير مدعومة
+    if (kIsWeb || !_isBiometricAvailable) {
       _fillDataAndLogin(username, password);
       return;
     }
 
-    try {
-      bool canCheck = await _localAuth!.canCheckBiometrics || await _localAuth!.isDeviceSupported();
+    // استدعاء نافذة البصمة الأنيقة
+    bool isAuthenticated = await _biometricService.authenticateWithBiometrics();
 
-      if (!canCheck) {
-        _fillDataAndLogin(username, password);
-        return;
-      }
-
-      bool didAuthenticate = await _localAuth!.authenticate(
-        localizedReason: 'تأكيد الهوية للدخول كـ $username',
-      );
-
-      if (didAuthenticate) {
-        HapticFeedback.heavyImpact(); 
-        _fillDataAndLogin(username, password);
-      }
-    } catch (e) {
+    if (isAuthenticated) {
+      HapticFeedback.heavyImpact(); 
       _fillDataAndLogin(username, password);
+    } else {
+      _showSnackBar('تم إلغاء البصمة أو فشل التعرف', Colors.orange.shade800, Icons.warning_amber_rounded);
     }
   }
 
@@ -265,6 +264,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         
         if (!mounted) return;
 
+        // 🔥 تنظيف الدور من أي مسافات أو أجزاء زائدة (لضمان التوجيه الصحيح)
+        role = role?.toString().split('.').last.toLowerCase().trim();
+
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('username', username);
         if (role != null) await prefs.setString('role', role);
@@ -274,27 +276,25 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         if (!mounted) return;
         setState(() => _isLoading = false);
 
-        // 🔥 التوجيه الذكي بناءً على دور المستخدم ونوع الجهاز (موبايل أم ويب)
+        // 🔥 التوجيه الذكي بعد تحديث الأدوار
         if (username == "dante_customer" || role == 'customer') {
           _navigate(const CustomerDashboardScreen());
         } 
-        else if (role == 'admin') {
-          // التوجيه للويب أو الموبايل
+        else if (role == 'admin' || role == 'main_admin' || role == 'tier2_admin') {
           if (kIsWeb) {
             _navigate(const AdminWebDashboard());
           } else {
             _navigate(const AdminDashboardScreen());
           }
         } 
+        else if (role == 'collector') {
+          _navigate(const CollectorDashboardScreen()); // 🔥 التوجيه إلى الشاشة الجديدة
+        } 
         else if (role == 'driver') {
           _navigate(const DriverDashboardScreen()); 
         } 
-        else if (role == 'collector') {
-          _navigate(const CollectorDashboardScreen());
-        } 
         else {
-          // الحالة الافتراضية
-          _navigate(const AdminDashboardScreen());
+          _navigate(const AdminDashboardScreen()); // افتراضي للطوارئ
         }
 
       } else {
@@ -310,12 +310,11 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     }
   }
 
-  // 🔥 دالة التوجيه المحدثة (Direct Route Reset) لحل مشكلة الويب نهائياً
   void _navigate(Widget screen) {
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (context) => screen),
-      (route) => false, // 🔥 يمسح كل الشاشات السابقة لضمان عدم تعارض الـ History
+      (route) => false, 
     );
   }
 
@@ -339,7 +338,6 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
-    // 🖥️ تحسين مظهر شاشة الدخول للويب (تحديد أقصى عرض للنموذج)
     final size = MediaQuery.of(context).size;
     final isDesktop = size.width > 800;
 
@@ -462,6 +460,33 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
               ),
               const SizedBox(height: 35),
               
+              // 🔥 زر الدخول السريع بالبصمة (يظهر فقط إذا كان هناك حساب محفوظ والبصمة مدعومة)
+              if (_savedAccounts.isNotEmpty && _isBiometricAvailable && !kIsWeb) ...[
+                Center(
+                  child: InkWell(
+                    onTap: () {
+                      // عند الضغط على البصمة مباشرة، نأخذ أول حساب محفوظ ونسجل الدخول به
+                      String firstUser = _savedAccounts.keys.first;
+                      String firstPass = _savedAccounts[firstUser];
+                      _authenticateAndFill(firstUser, firstPass);
+                    },
+                    borderRadius: BorderRadius.circular(50),
+                    child: Container(
+                      padding: const EdgeInsets.all(15),
+                      decoration: BoxDecoration(
+                        color: primaryColor.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: primaryColor.withOpacity(0.3))
+                      ),
+                      child: Icon(Icons.fingerprint, size: 40, color: primaryColor),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Center(child: Text("دخول سريع للبصمة", style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey))),
+                const SizedBox(height: 20),
+              ],
+
               SizedBox(
                 width: double.infinity,
                 height: 55,
@@ -479,7 +504,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   ),
                   child: _isLoading 
                     ? const SizedBox(width: 25, height: 25, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) 
-                    : Text("تسجيل الدخول", style: GoogleFonts.cairo(fontSize: 16, fontWeight: FontWeight.bold)),
+                    : Text("تسجيل الدخول يدوياً", style: GoogleFonts.cairo(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],

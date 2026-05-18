@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart'; // 🔥 استيراد مكتبة التنسيق المالي
+import 'package:intl/intl.dart'; 
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -55,6 +55,35 @@ class _ShipmentJourneyTimelineState extends State<ShipmentJourneyTimeline> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("تعذر فتح وثيقة الطباعة")));
     }
+  }
+
+  // 🔥 نافذة عرض صورة الشيك في الـ Timeline
+  void _showImageDialog(String base64String) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text("المرفق / השيك", style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx))
+                ],
+              ),
+            ),
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(15)),
+              child: Image.memory(base64Decode(base64String), fit: BoxFit.contain),
+            )
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -147,18 +176,36 @@ class _ShipmentJourneyTimelineState extends State<ShipmentJourneyTimeline> {
     );
   }
 
-  // تصميم عقدة التاريخ الزمني
+  // 🔥 التصميم المحدث لعقدة التاريخ الزمني لقراءة الأموال والشيكات
   Widget _buildHistoryNode({required String title, required String actor, required String time, required String notes, required bool isLast}) {
     DateTime date = DateTime.parse(time);
     String formattedTime = DateFormat('HH:mm | yyyy-MM-dd').format(date);
+    
+    // التحقق من وجود مبالغ مالية في الملاحظات (كاش أو شيك)
+    bool isFinancialTransaction = notes.contains('دج') || notes.contains('كاش') || notes.contains('شيك');
+    
+    // استخراج الكاش والشيك باستخدام تعابير منطقية بسيطة إذا كان النص يحتوي عليهما
+    String extractedCash = "0";
+    String extractedCheck = "0";
+    
+    if (isFinancialTransaction) {
+      RegExp cashReg = RegExp(r'كاش:\s*([0-9]*\.?[0-9]+)');
+      RegExp checkReg = RegExp(r'شيك:\s*([0-9]*\.?[0-9]+)');
+      
+      var cashMatch = cashReg.firstMatch(notes);
+      if (cashMatch != null) extractedCash = NumberFormat('#,##0').format(double.tryParse(cashMatch.group(1)!) ?? 0);
+      
+      var checkMatch = checkReg.firstMatch(notes);
+      if (checkMatch != null) extractedCheck = NumberFormat('#,##0').format(double.tryParse(checkMatch.group(1)!) ?? 0);
+    }
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Column(
           children: [
-            const Icon(Icons.check_circle, size: 20, color: Colors.blue),
-            if (!isLast) Container(width: 2, height: 60, color: Colors.blue.withOpacity(0.2)),
+            Icon(isFinancialTransaction ? Icons.account_balance_wallet_rounded : Icons.check_circle, size: 20, color: isFinancialTransaction ? Colors.green : Colors.blue),
+            if (!isLast) Container(width: 2, height: isFinancialTransaction ? 80 : 60, color: Colors.blue.withOpacity(0.2)),
           ],
         ),
         const SizedBox(width: 15),
@@ -169,10 +216,40 @@ class _ShipmentJourneyTimelineState extends State<ShipmentJourneyTimeline> {
               Text(title, style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 14, color: const Color(0xFF1E293B))),
               Text("بواسطة: $actor", style: GoogleFonts.cairo(fontSize: 12, color: Colors.blue.shade700)),
               Text(formattedTime, style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey)),
+              
               if (notes.isNotEmpty)
                 Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(notes, style: GoogleFonts.cairo(fontSize: 11, color: Colors.grey.shade600, fontStyle: FontStyle.italic)),
+                  padding: const EdgeInsets.only(top: 6),
+                  child: isFinancialTransaction
+                    ? Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.green.shade200)),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(notes.replaceAll(RegExp(r'\(كاش:.*?\)'), ''), style: GoogleFonts.cairo(fontSize: 11, color: Colors.green.shade900)),
+                            if (extractedCash != "0" || extractedCheck != "0") ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  if (extractedCash != "0") Text("💵 كاش: $extractedCash دج  ", style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
+                                  if (extractedCheck != "0") Text("🧾 شيك: $extractedCheck دج", style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.purple.shade800)),
+                                ],
+                              )
+                            ],
+                            // 🔥 عرض زر الشيك إذا كان التحديث يخص الشيك
+                            if (widget.order['customer_check_file'] != null && (title.contains('دين') || title.contains('تصريح') || title.contains('دفع')))
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8.0),
+                                child: InkWell(
+                                  onTap: () => _showImageDialog(widget.order['customer_check_file'].toString()),
+                                  child: Text("👁️ مشاهدة الشيك המرفق", style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue.shade700, decoration: TextDecoration.underline)),
+                                ),
+                              )
+                          ],
+                        ),
+                      )
+                    : Text(notes, style: GoogleFonts.cairo(fontSize: 11, color: Colors.grey.shade600, fontStyle: FontStyle.italic)),
                 ),
               const SizedBox(height: 20),
             ],

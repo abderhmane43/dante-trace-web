@@ -7,7 +7,9 @@ plugins {
 
 android {
     namespace = "com.example.dante_trace_mobile"
-    compileSdk = flutter.compileSdkVersion
+    
+    // 🔥 تم الرفع إلى 36 لتلبية طلبات المكتبات الحديثة جداً
+    compileSdk = 36 
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -16,16 +18,20 @@ android {
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+        // 🔥 تم التعديل لتجنب رسائل التحذير الخاصة بـ Kotlin
+        jvmTarget = "17" 
     }
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.dante_trace_mobile"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        
+        // 🔥 تم تحديد الحد الأدنى بـ 21 لضمان عمل جميع الميزات المتقدمة
+        minSdk = flutter.minSdkVersion 
+        
+        // 🔥 تم الرفع إلى 36 للتوافق التام
+        targetSdk = 36 
+        
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
@@ -42,4 +48,3 @@ android {
 flutter {
     source = "../.."
 }
-

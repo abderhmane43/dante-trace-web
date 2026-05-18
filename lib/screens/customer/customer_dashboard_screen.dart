@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb; // 🔥 استيراد بيئة الويب
-import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart' show kIsWeb; 
 import 'dart:convert';
+import 'dart:typed_data'; 
+import 'dart:io' as io; 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart'; 
 import 'package:shimmer/shimmer.dart'; 
@@ -10,6 +11,13 @@ import 'package:badges/badges.dart' as badges;
 import 'package:nfc_manager/nfc_manager.dart'; 
 import 'package:intl/intl.dart' hide TextDirection; 
 import 'package:url_launcher/url_launcher.dart'; 
+import 'package:image_picker/image_picker.dart'; 
+import 'package:file_picker/file_picker.dart' as fp; 
+import 'package:flutter/services.dart' show rootBundle; 
+
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 import '../../services/api_service.dart';
 import '../shared/login_screen.dart';
@@ -17,6 +25,7 @@ import '../../widgets/customer/checkout_dialog.dart';
 import '../../widgets/customer/product_catalog_card.dart';
 import '../../widgets/shared/order_timeline_widget.dart';
 import 'customer_delivery_confirm_screen.dart'; 
+import 'customer_debts_screen.dart'; // 🔥 تم إضافة استيراد شاشة الديون هنا
 
 class CustomerDashboardScreen extends StatefulWidget {
   const CustomerDashboardScreen({super.key});
@@ -26,7 +35,6 @@ class CustomerDashboardScreen extends StatefulWidget {
 }
 
 class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
-  // 🎨 الهوية البصرية
   final Color primaryBlue = const Color(0xFF1976D2);
   final Color successGreen = const Color(0xFF2E7D32);
   final Color warningOrange = const Color(0xFFEF6C00);
@@ -71,7 +79,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     super.dispose();
   }
 
-  // 📡 محرك البث الحي
   void _connectWebSocket() {
     try {
       final wsUrl = ApiService.baseUrl.replaceFirst('https', 'wss').replaceFirst('http', 'ws') + "/ws";
@@ -90,7 +97,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     } catch (e) { debugPrint("WS Error: $e"); }
   }
 
-  // 📥 جلب بيانات الطلبات (المضادة للأخطاء)
   Future<void> _loadCustomerData({bool showLoader = true}) async {
     if (showLoader) setState(() => _isLoadingOrders = true);
     try {
@@ -114,8 +120,10 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
           formattedDate = DateFormat('yyyy-MM-dd HH:mm').format(dt);
         }
 
-        final double orderAmount = double.tryParse(order['cash_amount']?.toString() ?? '0') ?? 0.0;
-        final String formattedAmount = NumberFormat('#,##0.00').format(orderAmount);
+        // 🔥 التعديل الذكي: قراءة المبلغ المتبقي بدلاً من السعر الأصلي فقط!
+        final double originalAmount = double.tryParse(order['cash_amount']?.toString() ?? '0') ?? 0.0;
+        final double remainingAmount = double.tryParse(order['remaining_amount']?.toString() ?? order['cash_amount']?.toString() ?? '0') ?? 0.0;
+        final String formattedAmount = NumberFormat('#,##0.00').format(remainingAmount);
 
         String? driverNameStr = (order['driver_name'] != null && order['driver_name'].toString().isNotEmpty) ? order['driver_name'].toString() : null;
         String? driverPhoneStr = (order['driver_phone'] != null && order['driver_phone'].toString().isNotEmpty) ? order['driver_phone'].toString() : null;
@@ -127,7 +135,8 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
           "payment_status": paymentStatus, 
           "approval_status": approvalStatus, 
           "scheduled_date": formattedDate, 
-          "raw_amount": orderAmount, 
+          "raw_amount": remainingAmount, // 🔥 تحديث لتمرير المبلغ المتبقي للعمليات
+          "original_amount": originalAmount, // حفظ السعر الأصلي للرجوع إليه
           "amount": "$formattedAmount دج",
           "address": order['customer_address'],
           "time": order['preferred_delivery_time'] ?? "أي وقت",
@@ -159,7 +168,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     }
   }
 
-  // 🛍️ جلب المنتجات
   Future<void> _loadProductsData() async {
     setState(() => _isLoadingProducts = true);
     try {
@@ -180,7 +188,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     if (mounted) setState(() => _currentUsername = prefs.getString('username') ?? "زبون");
   }
 
-  // 📞 الاتصال الهاتفي بالسائق
   Future<void> _callDriver(String phone) async {
     String cleanPhone = phone.replaceAll(RegExp(r'\s+'), '');
     final Uri callUrl = Uri.parse("tel:$cleanPhone");
@@ -195,25 +202,137 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     }
   }
 
-  // ==========================================================
-  // 📄 تنزيل وصل الاستلام
-  // ==========================================================
-  Future<void> _downloadReceipt(int orderId) async {
-    final Uri url = Uri.parse('${ApiService.baseUrl}/customer/orders/$orderId/receipt');
+  Future<void> _generateAndPrintInvoice(Map<String, dynamic> item) async {
+    _showLoadingOverlay();
     try {
-      if (await canLaunchUrl(url)) {
-        await launchUrl(url, mode: LaunchMode.externalApplication);
-      } else {
-        _showToast("عذراً، الوصل غير متوفر حالياً", Colors.red);
+      final pdf = pw.Document();
+
+      final fontRegular = pw.Font.ttf(await rootBundle.load('assets/fonts/Cairo-Regular.ttf'));
+      final fontBold = pw.Font.ttf(await rootBundle.load('assets/fonts/Cairo-Bold.ttf'));
+
+      List<dynamic> itemsList = [];
+      if (item['items'] is String) {
+        try { itemsList = jsonDecode(item['items']); } catch(e) {}
+      } else if (item['items'] is List) {
+        itemsList = item['items'];
       }
+
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          textDirection: pw.TextDirection.rtl, 
+          theme: pw.ThemeData.withFont(base: fontRegular, bold: fontBold),
+          build: (pw.Context context) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text("DANTE TRACE", style: pw.TextStyle(fontSize: 28, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900)),
+                        pw.Text("نظام إدارة اللوجستيات الذكي", style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700)),
+                      ]
+                    ),
+                    pw.Container(
+                      padding: const pw.EdgeInsets.symmetric(horizontal: 15, vertical: 8),
+                      decoration: pw.BoxDecoration(color: PdfColors.green100, borderRadius: const pw.BorderRadius.all(pw.Radius.circular(10))),
+                      child: pw.Text("فاتورة / إيصال استلام مكتمل", style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.green900)),
+                    )
+                  ]
+                ),
+                pw.SizedBox(height: 10),
+                pw.Divider(thickness: 2, color: PdfColors.blue900),
+                pw.SizedBox(height: 20),
+
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text("معلومات الزبون:", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14, color: PdfColors.blue900)),
+                          pw.SizedBox(height: 5),
+                          pw.Text("الاسم: $_currentUsername"),
+                          pw.Text("العنوان: ${item['address'] ?? 'غير محدد'}"),
+                        ]
+                      ),
+                    ),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text("معلومات الطلبية:", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14, color: PdfColors.blue900)),
+                          pw.SizedBox(height: 5),
+                          pw.Text("رقم التتبع: ${item['tracking_number']}"),
+                          pw.Text("تاريخ التسليم: ${item['scheduled_date']}"),
+                        ]
+                      ),
+                    ),
+                  ]
+                ),
+                pw.SizedBox(height: 30),
+
+                pw.Text("تفاصيل الشحنة:", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14, color: PdfColors.blue900)),
+                pw.SizedBox(height: 10),
+                pw.TableHelper.fromTextArray(
+                  border: pw.TableBorder.all(color: PdfColors.grey300),
+                  headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+                  headerDecoration: const pw.BoxDecoration(color: PdfColors.blue900),
+                  cellAlignment: pw.Alignment.centerRight,
+                  cellPadding: const pw.EdgeInsets.all(8),
+                  headers: ['اسم المنتج / البيان', 'الكمية'],
+                  data: itemsList.map((product) => [
+                    product['name'].toString(),
+                    product['qty'].toString(),
+                  ]).toList(),
+                ),
+                pw.SizedBox(height: 20),
+
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.end,
+                  children: [
+                    pw.Container(
+                      padding: const pw.EdgeInsets.all(15),
+                      decoration: pw.BoxDecoration(
+                        color: PdfColors.grey100,
+                        border: pw.Border.all(color: PdfColors.blue900, width: 2),
+                        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(10))
+                      ),
+                      child: pw.Text("المبلغ الإجمالي الموّرد: ${item['amount']}", style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900))
+                    )
+                  ]
+                ),
+                pw.Spacer(),
+
+                pw.Divider(color: PdfColors.grey400),
+                pw.SizedBox(height: 10),
+                pw.Center(
+                  child: pw.Text("وثيقة صادرة إلكترونياً من منصة Dante Trace - تم استلام الشحنة والمبلغ بنجاح.", textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 10, color: PdfColors.grey600))
+                )
+              ],
+            );
+          },
+        ),
+      );
+
+      if (mounted && Navigator.canPop(context)) Navigator.pop(context); 
+
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async => pdf.save(),
+        name: 'Invoice_${item['tracking_number']}.pdf'
+      );
+
     } catch (e) {
-      _showToast("حدث خطأ أثناء محاولة فتح الوصل", Colors.red);
+      if (mounted && Navigator.canPop(context)) Navigator.pop(context);
+      debugPrint("PDF Generation Error: $e");
+      _showToast("حدث خطأ أثناء استخراج الفاتورة، تأكد من توفر الخطوط", Colors.red);
     }
   }
 
-  // ==========================================================
-  // 📅 موافقة الزبون على الموعد المقترح
-  // ==========================================================
   void _handleCustomerApproval(Map<String, dynamic> item, bool isApprove) {
     if (isApprove) {
       _submitApproval(item['id'], "approved", null);
@@ -261,28 +380,337 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   }
 
   // ==========================================================
-  // 💸 نافذة التصريح بالدفع الجديدة (Customer Payment Declaration)
+  // 🛑 الدائرة المحكمة للديون (تسديد الدين من الزبون - تم تحديثها لدعم الشيكات) 🔥
   // ==========================================================
-  void _showPaymentDeclarationSheet(Map<String, dynamic> item) {
+  void _showDebtDeclarationSheet(Map<String, dynamic> item) async {
     final double totalRequired = item['raw_amount'];
     
-    // متغيرات الحالة داخل النافذة
-    double cashAmount = totalRequired; // الافتراضي أن يدفع كاش بالكامل
+    double cashAmount = totalRequired; 
+    double chequeAmount = 0.0;
+    String chequeRef = "";
+    String chequeOwner = "";
+    String? base64CheckFile; 
+    String? checkFileName;
+
+    TextEditingController cashCtrl = TextEditingController(text: cashAmount.toStringAsFixed(0));
+    TextEditingController chequeCtrl = TextEditingController(text: "");
+    TextEditingController ownerCtrl = TextEditingController(text: "");
+    TextEditingController refCtrl = TextEditingController(text: "");
+    TextEditingController notesCtrl = TextEditingController();
+    
+    int? selectedDriverId;
+    bool paidToAdminDirectly = false;
+    List<dynamic> availableDrivers = [];
+    bool isLoadingDrivers = true;
+
+    void _recalculate(void Function(void Function()) setModalState) {
+      cashAmount = double.tryParse(cashCtrl.text) ?? 0.0;
+      chequeAmount = double.tryParse(chequeCtrl.text) ?? 0.0;
+      chequeRef = refCtrl.text.trim();
+      chequeOwner = ownerCtrl.text.trim();
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          
+          if (isLoadingDrivers && availableDrivers.isEmpty) {
+            ApiService.getActiveDrivers().then((drivers) {
+              if (mounted) {
+                setModalState(() {
+                  availableDrivers = drivers;
+                  isLoadingDrivers = false;
+                });
+              }
+            });
+          }
+
+          bool isSubmitting = false;
+          double currentTotal = cashAmount + chequeAmount;
+
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 500),
+              child: Container(
+                decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+                padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 20, right: 20, top: 20),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(child: Container(width: 50, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Icon(Icons.handshake_rounded, color: Colors.red.shade700, size: 30),
+                          const SizedBox(width: 10),
+                          Text("تسديد وتسوية الدين", style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold, color: darkBlue)),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Text("يرجى إدخال المبالغ وإرفاق الشيك إن وجد.", style: GoogleFonts.cairo(fontSize: 13, color: Colors.grey.shade600)),
+                      
+                      Container(
+                        margin: const EdgeInsets.symmetric(vertical: 15),
+                        padding: const EdgeInsets.all(15),
+                        decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.red.shade100)),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text("قيمة الدين المعلق:", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: Colors.red.shade900)),
+                            Text("${NumberFormat('#,##0.00').format(totalRequired)} دج", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.red.shade700, fontSize: 16)),
+                          ],
+                        ),
+                      ),
+
+                      // حقول المبالغ
+                      Text("المبلغ نقداً (Cash) دج", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
+                      const SizedBox(height: 5),
+                      TextField(
+                        controller: cashCtrl, keyboardType: TextInputType.number,
+                        onChanged: (v) => setModalState(() => _recalculate(setModalState)),
+                        decoration: InputDecoration(prefixIcon: const Icon(Icons.money, color: Colors.green), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(vertical: 10)),
+                      ),
+                      const SizedBox(height: 15),
+
+                      Text("المبلغ عبر صك بنكي/بريدي دج", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
+                      const SizedBox(height: 5),
+                      TextField(
+                        controller: chequeCtrl, keyboardType: TextInputType.number,
+                        onChanged: (v) => setModalState(() => _recalculate(setModalState)),
+                        decoration: InputDecoration(hintText: "مبلغ الشيك", prefixIcon: const Icon(Icons.receipt, color: Colors.purple), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(vertical: 10)),
+                      ),
+                      
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 300),
+                        child: chequeAmount > 0 ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  flex: 1,
+                                  child: TextField(
+                                    controller: refCtrl, onChanged: (v) => setModalState(() => _recalculate(setModalState)),
+                                    decoration: InputDecoration(hintText: "رقم الصك", prefixIcon: const Icon(Icons.numbers, color: Colors.grey), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(vertical: 10)),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  flex: 1,
+                                  child: TextField(
+                                    controller: ownerCtrl, onChanged: (v) => setModalState(() => _recalculate(setModalState)),
+                                    decoration: InputDecoration(hintText: "اسم الشركة/صاحب الشيك", prefixIcon: const Icon(Icons.business_rounded, color: Colors.grey), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(vertical: 10)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: () async {
+                                      try {
+                                        final ImagePicker picker = ImagePicker();
+                                        final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
+                                        if (image != null) {
+                                          final bytes = await image.readAsBytes();
+                                          setModalState(() {
+                                            checkFileName = "صورة شيك ملتقطة";
+                                            base64CheckFile = base64Encode(bytes);
+                                          });
+                                        }
+                                      } catch (e) { debugPrint("Camera Error: $e"); }
+                                    },
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade50, foregroundColor: Colors.purple.shade800, elevation: 0),
+                                    icon: const Icon(Icons.camera_alt_rounded),
+                                    label: Text("تصوير الشيك", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 12)),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: () async {
+                                      try {
+                                        final ImagePicker picker = ImagePicker();
+                                        final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+                                        if (image != null) {
+                                          final bytes = await image.readAsBytes();
+                                          setModalState(() {
+                                            checkFileName = "صورة شيك من المعرض";
+                                            base64CheckFile = base64Encode(bytes);
+                                          });
+                                        }
+                                      } catch (e) { debugPrint("Gallery Error: $e"); }
+                                    },
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade50, foregroundColor: Colors.purple.shade800, elevation: 0),
+                                    icon: const Icon(Icons.image_rounded),
+                                    label: Text("من المعرض", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 12)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (checkFileName != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8.0),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                                    const SizedBox(width: 5),
+                                    Expanded(child: Text("تم إرفاق: $checkFileName", style: GoogleFonts.cairo(color: Colors.green.shade800, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  ],
+                                ),
+                              )
+                          ],
+                        ) : const SizedBox.shrink(),
+                      ),
+                      
+                      const SizedBox(height: 15),
+                      const Divider(),
+
+                      Text("من الذي استلم هذا المبلغ فعلياً؟", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
+                      CheckboxListTile(
+                        title: Text("دفعتها مباشرة للإدارة (خزينة الإدارة)", style: GoogleFonts.cairo(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade900)),
+                        value: paidToAdminDirectly,
+                        activeColor: Colors.blue.shade900,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        onChanged: (val) {
+                          setModalState(() {
+                            paidToAdminDirectly = val ?? true;
+                          });
+                        },
+                      ),
+
+                      if (!paidToAdminDirectly) ...[
+                        Text("أو اختر السائق/المُحصّل الذي استلمها:", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
+                        const SizedBox(height: 5),
+                        isLoadingDrivers 
+                          ? const Center(child: CircularProgressIndicator())
+                          : Container(
+                              decoration: BoxDecoration(color: bgGray, borderRadius: BorderRadius.circular(12)),
+                              child: DropdownButtonFormField<int>(
+                                decoration: const InputDecoration(border: InputBorder.none, contentPadding: EdgeInsets.symmetric(horizontal: 15, vertical: 5)),
+                                hint: Text("اضغط لاختيار السائق...", style: GoogleFonts.cairo(fontSize: 13)),
+                                value: selectedDriverId,
+                                items: availableDrivers.map((d) {
+                                  return DropdownMenuItem<int>(
+                                    value: d['id'],
+                                    child: Text("${d['name']} (${d['phone'] ?? 'بدون هاتف'})", style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
+                                  );
+                                }).toList(),
+                                onChanged: (val) => setModalState(() => selectedDriverId = val),
+                              ),
+                            ),
+                      ],
+                      
+                      const SizedBox(height: 15),
+                      Text("ملاحظات للإدارة (اختياري):", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
+                      const SizedBox(height: 5),
+                      TextField(
+                        controller: notesCtrl, maxLines: 2,
+                        decoration: InputDecoration(hintText: "مثال: سلمته الشيك في المحل...", border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+                      ),
+
+                      const SizedBox(height: 25),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red.shade700, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), disabledBackgroundColor: Colors.grey.shade300,
+                          ),
+                          onPressed: ((!paidToAdminDirectly && selectedDriverId == null) || isSubmitting) ? null : () async {
+                            
+                            if (currentTotal <= 0) {
+                              _showToast("يرجى إدخال مبلغ صحيح", Colors.orange);
+                              return;
+                            }
+                            if (chequeAmount > 0 && (chequeOwner.isEmpty || base64CheckFile == null)) {
+                              _showToast("يرجى كتابة اسم صاحب الشيك وإرفاق صورته!", Colors.orange.shade800);
+                              return;
+                            }
+
+                            setModalState(() => isSubmitting = true);
+                            
+                            bool success = await ApiService.customerDeclareDebt(
+                              item['id'], 
+                              cashAmount, 
+                              chequeAmount, 
+                              driverId: paidToAdminDirectly ? null : selectedDriverId,
+                              paidToAdminDirectly: paidToAdminDirectly,
+                              checkOwner: chequeOwner,
+                              checkNum: chequeRef,
+                              checkFile: base64CheckFile,
+                              notes: notesCtrl.text.trim()
+                            );
+                            
+                            if (!mounted) return;
+                            
+                            if (success) {
+                              Navigator.pop(ctx); 
+                              _showToast("✅ تم إرسال تصريح السداد بنجاح! ننتظر تأكيد الإدارة.", successGreen);
+                              _loadCustomerData(); 
+                            } else {
+                              setModalState(() => isSubmitting = false);
+                              _showToast("❌ حدث خطأ، يرجى المحاولة لاحقاً.", Colors.red);
+                            }
+                          },
+                          child: isSubmitting 
+                            ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : Text("تأكيد التسديد للإدارة", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+      )
+    );
+  }
+
+  // ==========================================================
+  // 💸 نافذة التصريح بالدفع الذكية (الاستلام العادي)
+  // ==========================================================
+  void _showPaymentDeclarationSheet(Map<String, dynamic> item) {
+    final double totalRequired = item['raw_amount']; 
+    
+    double cashAmount = totalRequired; 
     double chequeAmount = 0.0;
     double debtAmount = 0.0;
     String chequeRef = "";
+    String chequeOwner = "";
+    
+    String? base64CheckFile; 
+    String? checkFileName;
+    
+    String? base64CompanyFile;
+    String? companyFileName;
 
-    // للتحكم في حقول الإدخال
     TextEditingController cashCtrl = TextEditingController(text: cashAmount.toStringAsFixed(0));
     TextEditingController chequeCtrl = TextEditingController(text: "");
+    TextEditingController ownerCtrl = TextEditingController(text: "");
     TextEditingController debtCtrl = TextEditingController(text: "");
     TextEditingController refCtrl = TextEditingController(text: "");
+
+    bool isSubmitting = false; 
 
     void _recalculate(void Function(void Function()) setModalState) {
       double c = double.tryParse(cashCtrl.text) ?? 0.0;
       double q = double.tryParse(chequeCtrl.text) ?? 0.0;
       double d = double.tryParse(debtCtrl.text) ?? 0.0;
       chequeRef = refCtrl.text.trim();
+      chequeOwner = ownerCtrl.text.trim();
       
       cashAmount = c;
       chequeAmount = q;
@@ -292,7 +720,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent, // شفافة للويب
+      backgroundColor: Colors.transparent, 
       builder: (ctx) => StatefulBuilder(
         builder: (context, setModalState) {
           double currentTotal = cashAmount + chequeAmount + debtAmount;
@@ -337,7 +765,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                         ),
                       ),
 
-                      // 1. الدفع نقداً (Cash)
                       Text("المبلغ نقداً (Cash) دج", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
                       const SizedBox(height: 5),
                       TextField(
@@ -347,33 +774,105 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                       ),
                       const SizedBox(height: 15),
 
-                      // 2. الدفع بشيك (Cheque)
                       Text("المبلغ عبر صك بنكي/بريدي (إن وجد) دج", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
                       const SizedBox(height: 5),
-                      Row(
-                        children: [
-                          Expanded(
-                            flex: 1,
-                            child: TextField(
-                              controller: chequeCtrl, keyboardType: TextInputType.number,
-                              onChanged: (v) => setModalState(() => _recalculate(setModalState)),
-                              decoration: InputDecoration(hintText: "المبلغ", prefixIcon: const Icon(Icons.receipt, color: Colors.purple), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(vertical: 10)),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            flex: 1,
-                            child: TextField(
-                              controller: refCtrl,
-                              onChanged: (v) => setModalState(() => _recalculate(setModalState)),
-                              decoration: InputDecoration(hintText: "رقم الصك", prefixIcon: const Icon(Icons.numbers, color: Colors.grey), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(vertical: 10)),
-                            ),
-                          ),
-                        ],
+                      TextField(
+                        controller: chequeCtrl, keyboardType: TextInputType.number,
+                        onChanged: (v) => setModalState(() => _recalculate(setModalState)),
+                        decoration: InputDecoration(hintText: "مبلغ الشيك", prefixIcon: const Icon(Icons.receipt, color: Colors.purple), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(vertical: 10)),
                       ),
+                      
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 300),
+                        child: chequeAmount > 0 ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  flex: 1,
+                                  child: TextField(
+                                    controller: refCtrl,
+                                    onChanged: (v) => setModalState(() => _recalculate(setModalState)),
+                                    decoration: InputDecoration(hintText: "رقم الصك", prefixIcon: const Icon(Icons.numbers, color: Colors.grey), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(vertical: 10)),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  flex: 1,
+                                  child: TextField(
+                                    controller: ownerCtrl,
+                                    onChanged: (v) => setModalState(() => _recalculate(setModalState)),
+                                    decoration: InputDecoration(hintText: "اسم الشركة/صاحب الشيك", prefixIcon: const Icon(Icons.business_rounded, color: Colors.grey), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(vertical: 10)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: () async {
+                                      try {
+                                        final ImagePicker picker = ImagePicker();
+                                        final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
+                                        if (image != null) {
+                                          final bytes = await image.readAsBytes();
+                                          setModalState(() {
+                                            checkFileName = "صورة شيك ملتقطة";
+                                            base64CheckFile = base64Encode(bytes);
+                                          });
+                                        }
+                                      } catch (e) { debugPrint("Camera Error: $e"); }
+                                    },
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade50, foregroundColor: Colors.purple.shade800, elevation: 0),
+                                    icon: const Icon(Icons.camera_alt_rounded),
+                                    label: Text("تصوير الشيك", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 12)),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: () async {
+                                      try {
+                                        final ImagePicker picker = ImagePicker();
+                                        final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+                                        if (image != null) {
+                                          final bytes = await image.readAsBytes();
+                                          setModalState(() {
+                                            checkFileName = "صورة شيك من المعرض";
+                                            base64CheckFile = base64Encode(bytes);
+                                          });
+                                        }
+                                      } catch (e) { debugPrint("Gallery Error: $e"); }
+                                    },
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade50, foregroundColor: Colors.purple.shade800, elevation: 0),
+                                    icon: const Icon(Icons.image_rounded),
+                                    label: Text("من المعرض", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 12)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (checkFileName != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8.0),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                                    const SizedBox(width: 5),
+                                    Expanded(child: Text("تم إرفاق: $checkFileName", style: GoogleFonts.cairo(color: Colors.green.shade800, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  ],
+                                ),
+                              )
+                          ],
+                        ) : const SizedBox.shrink(),
+                      ),
+                      
                       const SizedBox(height: 15),
 
-                      // 3. الباقي كدين (Debt)
                       Text("المبلغ المتبقي كدين (بالآجل) دج", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
                       const SizedBox(height: 5),
                       TextField(
@@ -383,8 +882,58 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                       ),
                       
                       const SizedBox(height: 20),
+
+                      Text("مرفقات الشركة (اختياري)", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
+                      const SizedBox(height: 5),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            try {
+                              fp.FilePickerResult? result = await fp.FilePicker.platform.pickFiles(
+                                type: fp.FileType.custom, 
+                                allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg'],
+                                withData: kIsWeb, 
+                              );
+                              
+                              if (result != null) {
+                                Uint8List? fileBytes;
+                                if (kIsWeb) {
+                                  fileBytes = result.files.single.bytes;
+                                } else {
+                                  if (result.files.single.path != null) {
+                                    fileBytes = await io.File(result.files.single.path!).readAsBytes();
+                                  }
+                                }
+
+                                if (fileBytes != null) {
+                                  setModalState(() {
+                                    companyFileName = result.files.single.name;
+                                    base64CompanyFile = base64Encode(fileBytes!);
+                                  });
+                                }
+                              }
+                            } catch (e) { debugPrint("File Picker Error: $e"); }
+                          },
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade50, foregroundColor: Colors.blue.shade800, elevation: 0, padding: const EdgeInsets.symmetric(vertical: 12)),
+                          icon: const Icon(Icons.upload_file_rounded),
+                          label: Text("رفع ملف الشركة أو الفاتورة", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
+                        ),
+                      ),
+                      if (companyFileName != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8.0),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                              const SizedBox(width: 5),
+                              Expanded(child: Text("تم إرفاق: $companyFileName", style: GoogleFonts.cairo(color: Colors.green.shade800, fontSize: 12, fontWeight: FontWeight.bold))),
+                            ],
+                          ),
+                        ),
+
+                      const SizedBox(height: 20),
                       
-                      // شريط التحقق من المجموع
                       Container(
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(color: isBalanced ? Colors.green.shade50 : Colors.red.shade50, borderRadius: BorderRadius.circular(10)),
@@ -407,27 +956,46 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             disabledBackgroundColor: Colors.grey.shade300,
                           ),
-                          onPressed: !isBalanced ? null : () async {
+                          onPressed: (!isBalanced || isSubmitting) ? null : () async {
+                            if (chequeAmount > 0) {
+                              if (chequeOwner.isEmpty || base64CheckFile == null) {
+                                _showToast("يرجى كتابة اسم صاحب الشيك وإرفاق صورة/ملف الشيك!", Colors.orange.shade800);
+                                return;
+                              }
+                            }
+
                             List<Map<String, dynamic>> payments = [];
                             if (cashAmount > 0) payments.add({"method": "cash", "amount": cashAmount});
-                            if (chequeAmount > 0) payments.add({"method": "cheque", "amount": chequeAmount, "reference": chequeRef});
+                            if (chequeAmount > 0) {
+                              payments.add({
+                                "method": "cheque", 
+                                "amount": chequeAmount, 
+                                "reference": chequeRef,
+                                "check_owner": chequeOwner,   
+                                "check_file": base64CheckFile,
+                              });
+                            }
                             if (debtAmount > 0) payments.add({"method": "debt", "amount": debtAmount});
 
-                            Navigator.pop(ctx); 
-                            _showLoadingOverlay();
+                            if (payments.isNotEmpty && base64CompanyFile != null) {
+                              payments[0]["company_file"] = base64CompanyFile; 
+                            }
+
+                            setModalState(() => isSubmitting = true);
                             
                             bool success = await ApiService.customerDeclarePayment(item['id'], payments);
                             
-                            if (mounted && Navigator.canPop(context)) Navigator.pop(context); 
+                            if (!mounted) return;
                             
                             if (success) {
+                              Navigator.pop(ctx); 
                               _showToast("✅ تم إرسال تصريح الدفع وتأكيد الاستلام للإدارة", successGreen);
                               _loadCustomerData(); 
                               
                               String adminPhone = "";
                               try {
                                 final users = await ApiService.getAllUsers();
-                                final adminUser = users.firstWhere((u) => u['role'] == 'admin', orElse: () => null);
+                                final adminUser = users.firstWhere((u) => u['role'] == 'admin' || u['role'] == 'main_admin', orElse: () => null);
                                 if (adminUser != null && adminUser['phone'] != null) {
                                   adminPhone = adminUser['phone'].toString();
                                 }
@@ -459,10 +1027,13 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                                 }
                               }
                             } else {
+                              setModalState(() => isSubmitting = false);
                               _showToast("❌ حدث خطأ أثناء إرسال التصريح", Colors.red);
                             }
                           },
-                          child: Text("تأكيد وإرسال للإدارة", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+                          child: isSubmitting 
+                            ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : Text("تأكيد وإرسال للإدارة", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
                         ),
                       ),
                       const SizedBox(height: 20),
@@ -477,11 +1048,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     );
   }
 
-  // ==========================================================
-  // 🤝 المصافحة الذكية الثانية (NFC)
-  // ==========================================================
   void _startSmartNfcReceipt(Map<String, dynamic> item) async {
-    // 🔥 الحماية من الويب: الـ NFC يعمل فقط على تطبيق الهاتف
     if (kIsWeb) {
       _showToast("خاصية NFC غير مدعومة في متصفح الويب. يمكنك الاستلام عبر التصريح اليدوي لاحقاً.", Colors.orange.shade800);
       return;
@@ -489,6 +1056,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
     final trackingNum = item['tracking_number'];
     
+    // ignore: deprecated_member_use
     bool isAvailable = await NfcManager.instance.isAvailable();
     if (!isAvailable) {
       _showToast("حساس NFC غير مفعل أو غير متوفر في هاتفك 📱", Colors.red);
@@ -528,7 +1096,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
         List<int>? identifier;
         try {
-          // 🔥 حل مشكلة الـ Object في Dart الجديدة
           final Map<dynamic, dynamic> rawTagData = (tag as dynamic).data as Map<dynamic, dynamic>;
           for (var value in rawTagData.values) {
             if (value is Map && value.containsKey('identifier')) {
@@ -574,7 +1141,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
           controller: qtyCtrl,
           keyboardType: TextInputType.number,
           textAlign: TextAlign.center,
-          autofocus: true,
+          autofocus: true, 
           decoration: InputDecoration(
             filled: true, 
             fillColor: bgGray, 
@@ -644,7 +1211,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     );
   }
 
-  // 🔥 دالة منفصلة ونظيفة لبناء الشارة
   Widget _statusBadge(Map<String, dynamic> item) {
     Color color = Colors.grey;
     String label = item['status'] ?? 'pending';
@@ -658,28 +1224,32 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
       color = Colors.red.shade600; label = "يرجى التصريح بالدفع"; 
     } else if (paymentStatus == 'pending_admin_verification') {
       color = Colors.orange.shade700; label = "جاري مراجعة الإدارة";
+    } else if (paymentStatus == 'pending_debt_verification') {
+      color = Colors.red.shade900; label = "الدين قيد المراجعة"; // 🔥 بادج خاص بالدين
     } else {
       switch(status) {
         case 'pending': color = Colors.blueGrey; label = "قيد المراجعة"; break;
         case 'approved': color = Colors.blue; label = "تم الاعتماد"; break;
         case 'assigned': color = Colors.orange; label = "جاري التجهيز"; break;
         case 'picked_up': color = warningOrange; label = "في الطريق إليك"; break;
-        case 'in_transit': color = warningOrange; label = "في الطريق إليك"; break; // إضافة in_transit
+        case 'in_transit': color = warningOrange; label = "في الطريق إليك"; break; 
+        case 'delivered_unpaid': color = Colors.red.shade700; label = "دين غير مسدد ⚠️"; break; // 🔥 بادج الدين
+        case 'assigned_to_collector': color = Colors.red.shade700; label = "مطلوب سداد الدين"; break; // 🔥 بادج الدين
         case 'settled': color = successGreen; label = "مكتملة ومغلقة ✅"; break;
-        case 'delivered': color = successGreen; label = "تم التوصيل"; break; // إضافة delivered
+        case 'delivered': color = successGreen; label = "تم التوصيل"; break; 
       }
     }
     
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)), // استخدام withValues
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)), 
       child: Text(label, style: GoogleFonts.cairo(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDesktop = kIsWeb; // 🔥 التحقق من الويب
+    final isDesktop = kIsWeb; 
 
     return Scaffold(
       backgroundColor: bgGray,
@@ -704,7 +1274,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
               _buildStatsSection(),
               
               Padding(
-                padding: EdgeInsets.fromLTRB(isDesktop ? 60 : 20, 30, isDesktop ? 60 : 20, 15), // هوامش مرنة للويب
+                padding: EdgeInsets.fromLTRB(isDesktop ? 60 : 20, 30, isDesktop ? 60 : 20, 15), 
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -735,7 +1305,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
       decoration: BoxDecoration(
         color: primaryBlue,
         borderRadius: const BorderRadius.vertical(bottom: Radius.circular(35)),
-        boxShadow: [BoxShadow(color: primaryBlue.withValues(alpha: 0.3), blurRadius: 20, offset: const Offset(0, 10))] // استخدام withValues
+        boxShadow: [BoxShadow(color: primaryBlue.withValues(alpha: 0.3), blurRadius: 20, offset: const Offset(0, 10))] 
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -755,7 +1325,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     return Transform.translate(
       offset: const Offset(0, -25),
       child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: isDesktop ? 60 : 20), // هوامش مرنة للويب
+        padding: EdgeInsets.symmetric(horizontal: isDesktop ? 60 : 20), 
         child: Row(
           children: [
             _statItem("الإجمالي", _totalOrders.toString(), primaryBlue, Icons.inventory_2_rounded),
@@ -775,7 +1345,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         padding: const EdgeInsets.symmetric(vertical: 15),
         decoration: BoxDecoration(
           color: Colors.white, borderRadius: BorderRadius.circular(20),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10)] // استخدام withValues
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10)] 
         ),
         child: Column(
           children: [
@@ -797,7 +1367,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
       height: 260,
       child: ListView.builder(
         scrollDirection: Axis.horizontal, 
-        padding: EdgeInsets.symmetric(horizontal: isDesktop ? 60 : 15), // هوامش للويب
+        padding: EdgeInsets.symmetric(horizontal: isDesktop ? 60 : 15), 
         itemCount: _products.length,
         itemBuilder: (context, index) {
           final p = _products[index];
@@ -816,7 +1386,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     );
   }
 
-  // 📦 بناء بطاقة تتبع الطلبية (متجاوبة للويب)
   Widget _buildShipmentList(List<dynamic> orders, bool isDesktop, {bool isHistory = false}) {
     if (orders.isEmpty) {
       return Center(child: Padding(
@@ -828,12 +1397,12 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     return isDesktop
         ? GridView.builder(
             shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 60), // هوامش للويب
+            padding: const EdgeInsets.symmetric(horizontal: 60), 
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2, 
               crossAxisSpacing: 15,
               mainAxisSpacing: 15,
-              childAspectRatio: 1.5, // ارتفاع البطاقة المناسب
+              childAspectRatio: 1.5, 
             ),
             itemCount: orders.length,
             itemBuilder: (context, index) => _buildOrderCard(orders[index], isHistory),
@@ -846,20 +1415,23 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
           );
   }
 
-  // 🃏 الكارد المستقل الخاص بالطلبية
   Widget _buildOrderCard(Map<String, dynamic> item, bool isHistory) {
     bool canHandshake = item['status'] == 'picked_up' || item['status'] == 'in_transit';
     bool isPendingApproval = item['status'] == 'pending_approval' && item['approval_status'] == 'pending';
     
-    // 🔥 زر التصريح يظهر للزبون طالما الطرد تم إسناده أو خرج للميدان
     bool canDeclarePayment = (item['status'] == 'delivered' || item['status'] == 'picked_up' || item['status'] == 'in_transit' || item['status'] == 'assigned') && item['payment_status'] != 'pending_admin_verification' && item['payment_status'] != 'settled_with_company';
     
     bool isPaymentUnderReview = (item['payment_status'] == 'pending_admin_verification');
+    
+    // 🔥 شروط الديون
+    bool isDebt = item['status'] == 'delivered_unpaid' || item['status'] == 'assigned_to_collector';
+    bool isDebtUnderReview = item['payment_status'] == 'pending_debt_verification';
 
     Color cardBorderColor = Colors.transparent;
     if (isPendingApproval) cardBorderColor = pendingPurple;
-    if (canDeclarePayment) cardBorderColor = Colors.orange.shade400; // تنبيه للتصريح
-    if (!isHistory && !isPendingApproval && !canDeclarePayment) cardBorderColor = primaryBlue.withValues(alpha: 0.1); // استخدام withValues
+    if (canDeclarePayment) cardBorderColor = Colors.orange.shade400; 
+    if (isDebt || isDebtUnderReview) cardBorderColor = Colors.red.shade400; // 🔥 إطار أحمر للدين
+    if (!isHistory && !isPendingApproval && !canDeclarePayment && !isDebt && !isDebtUnderReview) cardBorderColor = primaryBlue.withValues(alpha: 0.1); 
 
     List<dynamic> itemsList = [];
     if (item['items'] is String) {
@@ -872,8 +1444,8 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
       margin: const EdgeInsets.only(bottom: 15),
       decoration: BoxDecoration(
         color: Colors.white, borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: cardBorderColor, width: (isPendingApproval || canDeclarePayment) ? 2 : 1),
-        boxShadow: [BoxShadow(color: isPendingApproval ? pendingPurple.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.03), blurRadius: 10)] // استخدام withValues
+        border: Border.all(color: cardBorderColor, width: (isPendingApproval || canDeclarePayment || isDebt || isDebtUnderReview) ? 2 : 1),
+        boxShadow: [BoxShadow(color: (isPendingApproval || isDebt) ? cardBorderColor.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.03), blurRadius: 10)] 
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -881,14 +1453,14 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
           ListTile(
             contentPadding: const EdgeInsets.all(15),
             leading: CircleAvatar(
-              backgroundColor: isPendingApproval ? pendingPurple.withValues(alpha: 0.1) : (isHistory ? Colors.grey.shade100 : primaryBlue.withValues(alpha: 0.1)), // استخدام withValues
-              child: Icon(isHistory ? Icons.check_rounded : Icons.local_shipping_rounded, color: isPendingApproval ? pendingPurple : (isHistory ? Colors.grey : primaryBlue)),
+              backgroundColor: isDebt ? Colors.red.shade50 : (isPendingApproval ? pendingPurple.withValues(alpha: 0.1) : (isHistory ? Colors.grey.shade100 : primaryBlue.withValues(alpha: 0.1))), 
+              child: Icon(isHistory ? Icons.check_rounded : Icons.local_shipping_rounded, color: isDebt ? Colors.red.shade700 : (isPendingApproval ? pendingPurple : (isHistory ? Colors.grey : primaryBlue))),
             ),
             title: Text(item['tracking_number'], style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("${item['amount']} - ${item['time']}", style: GoogleFonts.cairo(fontSize: 12)),
+                Text("${item['amount']} - ${item['time']}", style: GoogleFonts.cairo(fontSize: 12, color: isDebt ? Colors.red.shade700 : Colors.black87, fontWeight: isDebt ? FontWeight.bold : FontWeight.normal)),
                 if (item['scheduled_date'] != "غير محدد") 
                    Padding(
                      padding: const EdgeInsets.only(top: 4.0),
@@ -902,12 +1474,11 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                    ),
               ],
             ),
-            trailing: _statusBadge(item), // 🔥 استدعاء الدالة النظيفة
+            trailing: _statusBadge(item), 
           ),
           
           if (itemsList.isNotEmpty && !isPendingApproval) ...[
             const Divider(height: 1),
-            // 🔥 استخدام Expanded لمنع التمدد الخاطئ داخل GridView
             Expanded(
               child: SingleChildScrollView(
                 child: Padding(
@@ -935,12 +1506,11 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             ),
           ],
 
-          // عرض السائق 
-          if (item['driver_name'] != null && !isHistory && !isPaymentUnderReview) ...[
+          if (item['driver_name'] != null && !isHistory && !isPaymentUnderReview && !isDebtUnderReview) ...[
             const Divider(height: 1),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
-              decoration: BoxDecoration(color: Colors.blue.shade50.withValues(alpha: 0.5)), // استخدام withValues
+              decoration: BoxDecoration(color: Colors.blue.shade50.withValues(alpha: 0.5)), 
               child: Row(
                 children: [
                   Container(
@@ -971,8 +1541,23 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             ),
           ],
 
-          // 🔥 زر التصريح بالدفع وتأكيد الاستلام
-          if (canDeclarePayment && !isHistory) ...[
+          // 🔥 زر تسديد الدين الجديد للزبون
+          if (isDebt && !isHistory && !isDebtUnderReview) ...[
+            const Divider(height: 1),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20))),
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.symmetric(vertical: 12)),
+                icon: const Icon(Icons.handshake_rounded),
+                label: Text("تسديد الدين وتصفية الطرد", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
+                onPressed: () => _showDebtDeclarationSheet(item),
+              ),
+            ),
+          ],
+
+          if (canDeclarePayment && !isHistory && !isDebt && !isDebtUnderReview) ...[
             const Divider(height: 1),
             Container(
               width: double.infinity,
@@ -987,12 +1572,11 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             ),
           ],
           
-          // أزرار القبول والتأجيل للموعد
           if (isPendingApproval && !isHistory) ...[
             const Divider(height: 1),
             Container(
               padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
-              decoration: BoxDecoration(color: pendingPurple.withValues(alpha: 0.05)), // استخدام withValues
+              decoration: BoxDecoration(color: pendingPurple.withValues(alpha: 0.05)), 
               child: Row(
                 children: [
                   Expanded(
@@ -1022,7 +1606,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
               onTap: () => _startSmartNfcReceipt(item),
               child: Container(
                 width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(color: warningOrange.withValues(alpha: 0.05)), // استخدام withValues
+                decoration: BoxDecoration(color: warningOrange.withValues(alpha: 0.05)), 
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -1038,12 +1622,12 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
           if (isHistory) ...[
             const Divider(height: 1),
             InkWell(
-              onTap: () => _downloadReceipt(item['id']),
+              onTap: () => _generateAndPrintInvoice(item), 
               child: Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(
-                  color: successGreen.withValues(alpha: 0.05), // استخدام withValues
+                  color: successGreen.withValues(alpha: 0.05), 
                   borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20))
                 ),
                 child: Row(
@@ -1051,17 +1635,17 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                   children: [
                     Icon(Icons.download_rounded, color: successGreen, size: 18),
                     const SizedBox(width: 8),
-                    Text("تنزيل وصل الاستلام النهائي (PDF)", style: GoogleFonts.cairo(color: successGreen, fontWeight: FontWeight.bold, fontSize: 13)),
+                    Text("استخراج وصل الاستلام والفاتورة (PDF)", style: GoogleFonts.cairo(color: successGreen, fontWeight: FontWeight.bold, fontSize: 13)),
                   ],
                 ),
               ),
             )
           ],
 
-          if (!isHistory && !isPendingApproval && !canDeclarePayment && !isPaymentUnderReview) 
+          if (!isHistory && !isPendingApproval && !canDeclarePayment && !isPaymentUnderReview && !isDebt && !isDebtUnderReview) 
             Container(
               decoration: BoxDecoration(
-                color: Colors.blueGrey.shade50.withValues(alpha: 0.3), // استخدام withValues
+                color: Colors.blueGrey.shade50.withValues(alpha: 0.3), 
                 borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
                 border: Border(top: BorderSide(color: Colors.grey.shade200))
               ),
@@ -1115,7 +1699,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   Widget _buildSectionTitle(String title, bool isDesktop) {
     return Padding(
       padding: EdgeInsets.fromLTRB(isDesktop ? 60 : 20, 30, isDesktop ? 60 : 20, 15),
-      child: Text(title, style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold, color: darkBlue.withValues(alpha: 0.8))), // استخدام withValues
+      child: Text(title, style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold, color: darkBlue.withValues(alpha: 0.8))), 
     );
   }
 
@@ -1142,6 +1726,22 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomerDeliveryConfirmScreen()));
             }
           ),
+
+          // 🔥 الخطوة 2: إضافة زر سجل الديون الجديد هنا
+          ListTile(
+            leading: Container(
+              padding: const EdgeInsets.all(8), 
+              decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(8)), 
+              child: Icon(Icons.account_balance_wallet_rounded, color: Colors.red.shade700)
+            ),
+            title: Text("سجل الديون (الآجل)", style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
+            subtitle: Text("متابعة المبالغ المتبقية بذمتك", style: GoogleFonts.cairo(fontSize: 10)),
+            onTap: () {
+              Navigator.pop(context); // إغلاق القائمة
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomerDebtsScreen()));
+            }
+          ),
+
           const Divider(),
           
           ListTile(

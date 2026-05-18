@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart'
-    show kIsWeb; // 🔥 استيراد مهم لفحص بيئة الويب
+import 'package:flutter/foundation.dart' show kIsWeb; 
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:nfc_manager/nfc_manager.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 
 import '../../services/api_service.dart';
 import '../../widgets/admin/logistics/package_review_dialog.dart';
-import '../../widgets/admin/logistics/logistics_dialogs.dart';
 
 class LogisticsManagementScreen extends StatefulWidget {
   const LogisticsManagementScreen({super.key});
@@ -60,10 +57,12 @@ class _LogisticsManagementScreenState extends State<LogisticsManagementScreen> {
 
       if (mounted) {
         setState(() {
-          if (results[0].statusCode == 200)
+          if (results[0].statusCode == 200) {
             _pendingOrders = jsonDecode(utf8.decode(results[0].bodyBytes));
-          if (results[1].statusCode == 200)
+          }
+          if (results[1].statusCode == 200) {
             _approvedOrders = jsonDecode(utf8.decode(results[1].bodyBytes));
+          }
           if (results[2].statusCode == 200) {
             final users = jsonDecode(utf8.decode(results[2].bodyBytes));
             _allDrivers = users
@@ -95,24 +94,150 @@ class _LogisticsManagementScreenState extends State<LogisticsManagementScreen> {
     return grouped;
   }
 
+  // =========================================================================
+  // 📱 دوال الواتساب ونافذة التوجيه (الجديدة)
+  // =========================================================================
+
+  Future<void> _launchWhatsApp(String phone, String message) async {
+    String cleanPhone = phone.replaceAll(RegExp(r'\D'), ''); 
+    if (cleanPhone.startsWith('0')) cleanPhone = '213${cleanPhone.substring(1)}';
+    else if (!cleanPhone.startsWith('213')) cleanPhone = '213$cleanPhone'; 
+
+    final Uri whatsappUrl = Uri.parse("whatsapp://send?phone=$cleanPhone&text=${Uri.encodeComponent(message)}");
+    final Uri webUrl = Uri.parse("https://wa.me/$cleanPhone?text=${Uri.encodeComponent(message)}");
+    
+    try {
+      if (await canLaunchUrl(whatsappUrl)) {
+        await launchUrl(whatsappUrl, mode: LaunchMode.externalApplication);
+      } else if (await canLaunchUrl(webUrl)) {
+        await launchUrl(webUrl, mode: LaunchMode.externalApplication);
+      } else {
+        _showToast("تعذر فتح واتساب. تأكد من تثبيت التطبيق.", Colors.red);
+      }
+    } catch (e) {
+      _showToast("تعذر فتح واتساب.", Colors.red);
+    }
+  }
+
+  void _showAssignmentWhatsAppDialog(BuildContext context, Map<String, dynamic> order, Map<String, dynamic> driver) {
+    List<dynamic> items = order['items'] ?? [];
+    String itemsText = items.map((i) {
+      String name = i['name'] ?? 'قطعة';
+      int qty = int.tryParse(i['qty']?.toString() ?? '1') ?? 1;
+      double price = double.tryParse(i['price']?.toString() ?? '0') ?? 0.0;
+      return "  ▪️ $qty x $name (${price} دج)";
+    }).join("\n");
+
+    String scheduledDate = order['scheduled_date'] != null 
+        ? DateFormat('yyyy-MM-dd HH:mm').format(DateTime.parse(order['scheduled_date'])) 
+        : "أقرب وقت ممكن";
+    
+    final double amount = double.tryParse(order['cash_amount']?.toString() ?? '0') ?? 0.0;
+    final String formattedAmount = NumberFormat('#,##0.00').format(amount);
+
+    String driverName = driver['first_name'] ?? driver['username'] ?? 'الطيب';
+    String customerName = order['customer_name'] ?? 'الزبون';
+
+    String driverMsg = '''مرحباً $driverName، تم إسناد طلبية الزبون *$customerName* لك بنجاح. يرجى البدء في عملية التوصيل فوراً 🚚.
+
+📌 الدفعة : ${order['tracking_number']}
+📦 المنتجات:
+$itemsText
+💰 المبلغ الإجمالي: $formattedAmount دج
+⏰ موعد الاستلام: $scheduledDate
+
+📞 رقم الزبون للاتصال: ${order['customer_phone']}
+📍 عنوان التوصيل: ${order['customer_wilaya'] ?? ''} - ${order['customer_address']}''';
+
+    String customerMsg = '''مرحباً $customerName 👋،
+تم خروج طلبيتك رقم (${order['tracking_number']}) للتوصيل وهي في طريقها إليك! 🚚
+
+📦 المنتجات:
+$itemsText
+💰 المبلغ الإجمالي المطلوب: $formattedAmount دج
+⏰ الموعد المتوقع: $scheduledDate
+
+👨‍✈️ السائق الموكل: $driverName
+📞 رقم هاتف السائق للتواصل: ${driver['phone'] ?? 'غير متوفر'}''';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Column(
+          children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.green, size: 50),
+            const SizedBox(height: 10),
+            Text("تم الإسناد بنجاح! 🎉", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.green.shade800)),
+          ],
+        ),
+        content: Text("لمن تريد إرسال تفاصيل الطلبية عبر الواتساب؟", textAlign: TextAlign.center, style: GoogleFonts.cairo(fontSize: 14)),
+        actionsAlignment: MainAxisAlignment.center,
+        actionsOverflowDirection: VerticalDirection.down,
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+              icon: const Icon(Icons.send_rounded),
+              label: Text("إرسال التفاصيل للسائق", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 14)),
+              onPressed: () {
+                 if (driver['phone'] != null) {
+                   _launchWhatsApp(driver['phone'].toString(), driverMsg);
+                 } else {
+                   _showToast("رقم السائق غير مسجل!", Colors.red);
+                 }
+              },
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade700, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+              icon: const Icon(Icons.send_rounded),
+              label: Text("إرسال التفاصيل للزبون", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 14)),
+              onPressed: () {
+                 if (order['customer_phone'] != null) {
+                   _launchWhatsApp(order['customer_phone'].toString(), customerMsg);
+                 }
+              },
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text("إغلاق", style: GoogleFonts.cairo(color: Colors.grey.shade700, fontWeight: FontWeight.bold)),
+          )
+        ],
+      ),
+    );
+  }
+
   // ==========================================
-  // 2. محرك التوجيه (Pro Mode)
+  // 2. محرك التوجيه والإسناد 
   // ==========================================
-  Future<void> _executeManualDispatch(int orderId, String driverId) async {
+  Future<void> _executeManualDispatch(int orderId, String driverId, Map<String, dynamic> order) async {
     if (mounted && Navigator.canPop(context)) Navigator.pop(context);
 
     _showLoadingOverlay();
 
     try {
-      bool success =
-          await ApiService.assignOrderToDriver(orderId, int.parse(driverId));
+      bool success = await ApiService.assignOrderToDriver(orderId, int.parse(driverId));
 
       if (mounted && Navigator.canPop(context)) Navigator.pop(context);
 
       if (success) {
         await ApiService.updateOrderStatus(orderId, 'assigned');
-        _showToast("✅ تم التوجيه بنجاح!", Colors.green.shade700);
-        _loadLogisticsData();
+        _loadLogisticsData(); // تحديث القائمة
+        
+        // 🔥 جلب بيانات السائق لعرضها في الواتساب
+        final selectedDriver = _allDrivers.firstWhere((d) => d['id'].toString() == driverId, orElse: () => {});
+        
+        // 🔥 استدعاء نافذة الواتساب الذكية هنا
+        _showAssignmentWhatsAppDialog(context, order, selectedDriver);
+        
       } else {
         _showToast("❌ فشل التوجيه اليدوي: تحقق من الصلاحيات", Colors.red);
       }
@@ -139,7 +264,7 @@ class _LogisticsManagementScreenState extends State<LogisticsManagementScreen> {
               order: order,
               fleet: _allDrivers,
               onManualDispatch: (driverId) =>
-                  _executeManualDispatch(order['id'], driverId),
+                  _executeManualDispatch(order['id'], driverId, order), // مررنا order هنا
               onNfcDispatch: () =>
                   _executeNfcHandshake(order['tracking_number'], order['id']),
             )).then((_) => _loadLogisticsData());
@@ -148,8 +273,7 @@ class _LogisticsManagementScreenState extends State<LogisticsManagementScreen> {
   void _showDispatchOptions(Map<String, dynamic> order) {
     showModalBottomSheet(
         context: context,
-        backgroundColor:
-            Colors.transparent, // لجعل الإطار يظهر بشكل أجمل في الويب
+        backgroundColor: Colors.transparent, 
         isScrollControlled: true,
         builder: (ctx) {
           return Center(
@@ -160,8 +284,7 @@ class _LogisticsManagementScreenState extends State<LogisticsManagementScreen> {
                   color: Colors.white,
                   borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
                 ),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -241,7 +364,7 @@ class _LogisticsManagementScreenState extends State<LogisticsManagementScreen> {
   void _showManualDriverSelection(Map<String, dynamic> order) {
     showModalBottomSheet(
         context: context,
-        backgroundColor: Colors.transparent, // دعم للويب
+        backgroundColor: Colors.transparent, 
         isScrollControlled: true,
         builder: (ctx) {
           return Center(
@@ -282,7 +405,7 @@ class _LogisticsManagementScreenState extends State<LogisticsManagementScreen> {
                                   final driver = _allDrivers[index];
                                   return InkWell(
                                     onTap: () => _executeManualDispatch(
-                                        order['id'], driver['id'].toString()),
+                                        order['id'], driver['id'].toString(), order), // مررنا order هنا
                                     borderRadius: BorderRadius.circular(16),
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(
@@ -386,7 +509,7 @@ class _LogisticsManagementScreenState extends State<LogisticsManagementScreen> {
   // ==========================================
   @override
   Widget build(BuildContext context) {
-    final isDesktop = kIsWeb; // 🔥 فحص بيئة الويب
+    final isDesktop = kIsWeb; 
 
     return DefaultTabController(
       length: 2,
@@ -399,7 +522,6 @@ class _LogisticsManagementScreenState extends State<LogisticsManagementScreen> {
           backgroundColor: primaryOrange, foregroundColor: Colors.white,
           elevation: 0,
           centerTitle: true,
-          // 🔥 إخفاء القائمة العلوية في الكمبيوتر
           leading: isDesktop ? const SizedBox.shrink() : null,
           bottom: TabBar(
             indicatorColor: Colors.white,
@@ -444,7 +566,7 @@ class _LogisticsManagementScreenState extends State<LogisticsManagementScreen> {
         physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics()),
         padding: EdgeInsets.symmetric(
-            horizontal: isDesktop ? 60 : 16, vertical: 16), // مساحات الويب
+            horizontal: isDesktop ? 60 : 16, vertical: 16), 
         child: _buildOrderList(orders, isPendingTab, isDesktop),
       ),
     );
@@ -612,7 +734,6 @@ class _LogisticsManagementScreenState extends State<LogisticsManagementScreen> {
     );
   }
 
-  // 🔥 الترصيص الاحترافي: استبدال الـ DataTable بقائمة بطاقات عصرية متجاوبة للويب
   Widget _buildOrderList(
       List<dynamic> orders, bool isPendingTab, bool isDesktop) {
     return isDesktop

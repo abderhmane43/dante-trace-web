@@ -1,19 +1,14 @@
 import 'dart:convert';
-import 'dart:typed_data'; // 🔥 للتعامل مع الصور (Bytes)
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb; 
-import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:shimmer/shimmer.dart';
-import 'package:nfc_manager/nfc_manager.dart';
-import 'package:web_socket_channel/web_socket_channel.dart'; 
+import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart'; 
-import 'package:url_launcher/url_launcher.dart'; 
-import 'package:image_picker/image_picker.dart'; // 🔥 استيراد مكتبة الكاميرا والصور
+import 'package:nfc_manager/nfc_manager.dart'; 
 
 import '../../services/api_service.dart';
-import '../shared/login_screen.dart'; 
+import '../../widgets/admin/admin_drawer.dart'; 
 
 class CollectorDashboardScreen extends StatefulWidget {
   const CollectorDashboardScreen({super.key});
@@ -24,329 +19,112 @@ class CollectorDashboardScreen extends StatefulWidget {
 
 class _CollectorDashboardScreenState extends State<CollectorDashboardScreen> {
   final Color primaryRed = const Color(0xFFD32F2F);
-  final Color darkBlue = const Color(0xFF1E293B);
-  final Color successGreen = const Color(0xFF1B5E20);
-  final Color bgGray = const Color(0xFFF8FAFC);
+  final Color darkBlue = const Color(0xFF1E293B); 
+  final Color softBg = const Color(0xFFF8FAFC);
+  final Color cardBorder = const Color(0xFFE2E8F0);
   
   bool _isLoading = true;
-  double _myBalance = 0.0;
-  String _collectorName = "المحصل";
-  
-  List<dynamic> _drivers = [];
-  List<dynamic> _customers = [];
-  
-  WebSocketChannel? _channel; 
+  String _userName = 'محصل ميداني';
+  double _myCashBalance = 0.0;
+  double _myCheckBalance = 0.0;
+
+  List<dynamic> _driversWithCash = [];
+  List<dynamic> _customerDebts = [];
+  DateTime? _lastUpdated;
 
   @override
   void initState() {
     super.initState();
     _fetchCollectorData();
-    _connectWebSocket(); 
   }
 
-  @override
-  void dispose() {
-    _channel?.sink.close(); 
-    super.dispose();
+  void _triggerSnackBar(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars(); 
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(isError ? Icons.error_outline : Icons.check_circle_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(child: Text(msg, style: GoogleFonts.cairo(fontSize: 13, fontWeight: FontWeight.bold))),
+          ],
+        ),
+        backgroundColor: isError ? primaryRed : Colors.green.shade800,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.all(15),
+      )
+    );
   }
 
-  // ==========================================
-  // 📡 الاتصال الحي بالسيرفر (WebSocket)
-  // ==========================================
-  void _connectWebSocket() {
-    try {
-      String wsUrl = ApiService.baseUrl.replaceFirst('https', 'wss').replaceFirst('http', 'ws');
-      _channel = WebSocketChannel.connect(Uri.parse('$wsUrl/ws'));
-
-      _channel!.stream.listen(
-        (message) {
-          if (message == "NEW_ORDER" || message == "STATUS_UPDATE") {
-            _fetchCollectorData(); 
-            if (mounted) {
-              _showToast("تحديث جديد في المهام والديون 🔄", Colors.blue.shade700);
-            }
-          }
-        },
-        onDone: () {
-          Future.delayed(const Duration(seconds: 5), () {
-            if (mounted) _connectWebSocket();
-          });
-        },
-        onError: (error) {
-          debugPrint("WebSocket Error: $error");
-        },
-      );
-    } catch (e) { 
-      debugPrint("WebSocket Initialization Error: $e"); 
-    }
+  void _showLoadingOverlay() {
+    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator(color: Colors.white)));
   }
 
   Future<void> _fetchCollectorData() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
-
+    
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('auth_token') ?? '';
-      final headers = {'Authorization': 'Bearer $token', 'Content-Type': 'application/json; charset=utf-8'};
+      final headers = {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'};
 
-      final results = await Future.wait([
-        http.get(Uri.parse('${ApiService.baseUrl}/users/me'), headers: headers),
-        http.get(Uri.parse('${ApiService.baseUrl}/collector/debtors'), headers: headers),
-      ]);
+      try {
+        final profileRes = await http.get(Uri.parse('${ApiService.baseUrl}/users/me'), headers: headers).timeout(const Duration(seconds: 15));
+        if (profileRes.statusCode == 200) {
+          final profile = jsonDecode(utf8.decode(profileRes.bodyBytes));
+          _userName = profile['first_name']?.toString() ?? profile['username']?.toString() ?? 'محصل';
+          _myCashBalance = double.tryParse(profile['current_cash_balance']?.toString() ?? '0') ?? 0.0;
+          _myCheckBalance = double.tryParse(profile['current_check_balance']?.toString() ?? '0') ?? 0.0;
+        }
+      } catch (e) {
+        debugPrint("فشل جلب الملف الشخصي: $e");
+      }
+
+      try {
+        final debtorsRes = await http.get(Uri.parse('${ApiService.baseUrl}/collector/debtors'), headers: headers).timeout(const Duration(seconds: 15));
+        if (debtorsRes.statusCode == 200) {
+          final debtorsData = jsonDecode(utf8.decode(debtorsRes.bodyBytes));
+          _driversWithCash = debtorsData['drivers'] ?? [];
+          _customerDebts = debtorsData['customers'] ?? [];
+        } else {
+           _driversWithCash = [];
+           _customerDebts = [];
+           debugPrint("خطأ في جلب الديون: ${debtorsRes.statusCode}");
+        }
+      } catch (e) {
+         _driversWithCash = [];
+         _customerDebts = [];
+         debugPrint("عطل سيرفر أثناء جلب الديون: $e");
+      }
 
       if (mounted) {
         setState(() {
-          if (results[0].statusCode == 200) {
-            final me = jsonDecode(utf8.decode(results[0].bodyBytes));
-            _myBalance = double.tryParse(me['current_cash_balance']?.toString() ?? '0') ?? 0.0;
-            _collectorName = me['first_name'] ?? me['username'] ?? "المحصل";
-          }
-          if (results[1].statusCode == 200) {
-            final data = jsonDecode(utf8.decode(results[1].bodyBytes));
-            _drivers = data['drivers'] ?? [];
-            _customers = data['customers'] ?? [];
-          }
           _isLoading = false;
+          _lastUpdated = DateTime.now();
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
-      _showToast("تعذر الاتصال بالسيرفر", Colors.red);
-    }
-  }
-
-  // ==========================================
-  // 💬 دوال التواصل (واتساب + اتصال)
-  // ==========================================
-  Future<void> _launchContact(String phone, {bool isWhatsApp = false}) async {
-    if (phone.isEmpty || phone == '-') {
-      _showToast("رقم الهاتف غير متوفر", Colors.orange);
-      return;
-    }
-
-    String cleanPhone = phone.replaceAll(RegExp(r'\D'), ''); 
-    if (cleanPhone.startsWith('0')) cleanPhone = '213${cleanPhone.substring(1)}';
-    
-    Uri url;
-    if (isWhatsApp) {
-      url = Uri.parse("whatsapp://send?phone=$cleanPhone");
-    } else {
-      url = Uri.parse("tel:+$cleanPhone");
-    }
-
-    try {
-      if (await canLaunchUrl(url)) {
-        await launchUrl(url, mode: LaunchMode.externalApplication);
-      } else if (isWhatsApp) {
-        url = Uri.parse("https://wa.me/$cleanPhone");
-        await launchUrl(url, mode: LaunchMode.externalApplication);
-      } else {
-        _showToast("تعذر تنفيذ الإجراء", Colors.red);
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _triggerSnackBar("تأكد من استقرار اتصالك بالإنترنت", isError: true);
       }
-    } catch (e) {
-      _showToast("حدث خطأ أثناء الفتح", Colors.red);
     }
   }
 
-  // ==========================================
-  // 💸 نافذة تسجيل المصروف (إلزامية البون)
-  // ==========================================
-  void _showAddExpenseSheet() {
-    final TextEditingController amountController = TextEditingController();
-    final TextEditingController descController = TextEditingController();
-    
-    Uint8List? selectedImageBytes;
-    String? base64Image;
-    bool isSubmitting = false;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setModalState) {
-            return Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-              ),
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-                left: 20, right: 20, top: 20
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.money_off_rounded, color: primaryRed, size: 28),
-                      const SizedBox(width: 10),
-                      Text("تسجيل مصروف جديد", style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold, color: darkBlue)),
-                    ],
-                  ),
-                  const SizedBox(height: 5),
-                  Text("سيتم خصم هذا المبلغ من عهدتك فوراً بعد إرفاق البون.", style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey.shade600)),
-                  const SizedBox(height: 20),
-                  
-                  // إدخال المبلغ
-                  TextField(
-                    controller: amountController,
-                    keyboardType: TextInputType.number,
-                    style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16),
-                    decoration: InputDecoration(
-                      labelText: "المبلغ (دج)*",
-                      labelStyle: GoogleFonts.cairo(),
-                      prefixIcon: const Icon(Icons.attach_money_rounded),
-                      filled: true,
-                      fillColor: bgGray,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                    ),
-                  ),
-                  const SizedBox(height: 15),
-                  
-                  // إدخال البيان
-                  TextField(
-                    controller: descController,
-                    maxLines: 2,
-                    style: GoogleFonts.cairo(),
-                    decoration: InputDecoration(
-                      labelText: "بيان المصروف (ماذا اشتريت؟)*",
-                      labelStyle: GoogleFonts.cairo(),
-                      prefixIcon: const Icon(Icons.edit_document),
-                      filled: true,
-                      fillColor: bgGray,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                    ),
-                  ),
-                  const SizedBox(height: 15),
-
-                  // 🔥 زر الكاميرا وإرفاق البون
-                  InkWell(
-                    onTap: () async {
-                      final ImagePicker picker = ImagePicker();
-                      // إعطاء المستخدم خيار الكاميرا أو المعرض (الكاميرا أفضل للعمل الميداني)
-                      final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
-                      
-                      if (image != null) {
-                        final bytes = await image.readAsBytes();
-                        setModalState(() {
-                          selectedImageBytes = bytes;
-                          base64Image = base64Encode(bytes);
-                        });
-                      }
-                    },
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(15),
-                      decoration: BoxDecoration(
-                        color: selectedImageBytes == null ? Colors.orange.shade50 : Colors.green.shade50,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: selectedImageBytes == null ? Colors.orange.shade300 : Colors.green.shade300, style: BorderStyle.solid),
-                      ),
-                      child: Column(
-                        children: [
-                          Icon(
-                            selectedImageBytes == null ? Icons.camera_alt_rounded : Icons.check_circle_rounded, 
-                            color: selectedImageBytes == null ? Colors.orange.shade800 : Colors.green.shade800, 
-                            size: 30
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            selectedImageBytes == null ? "التقط صورة البون (إجباري)*" : "تم إرفاق صورة البون بنجاح", 
-                            style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: selectedImageBytes == null ? Colors.orange.shade800 : Colors.green.shade800)
-                          ),
-                          if (selectedImageBytes != null) ...[
-                            const SizedBox(height: 10),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.memory(selectedImageBytes!, height: 80, width: double.infinity, fit: BoxFit.cover),
-                            )
-                          ]
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 25),
-                  
-                  // زر الإرسال
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryRed,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: isSubmitting ? null : () async {
-                        final double? amount = double.tryParse(amountController.text.trim());
-                        final String desc = descController.text.trim();
-
-                        if (amount == null || amount <= 0) {
-                          _showToast("يرجى إدخال مبلغ صحيح", Colors.orange.shade800);
-                          return;
-                        }
-                        if (desc.isEmpty) {
-                          _showToast("يرجى كتابة بيان المصروف", Colors.orange.shade800);
-                          return;
-                        }
-                        if (base64Image == null) {
-                          _showToast("لا يمكن اعتماد المصروف بدون صورة البون!", Colors.red.shade800);
-                          return;
-                        }
-
-                        setModalState(() => isSubmitting = true);
-
-                        // 🔥 إرسال الطلب للسيرفر
-                        bool success = await ApiService.submitDriverExpense(
-                          amount, 
-                          desc, 
-                          receiptImage: base64Image
-                        );
-
-                        setModalState(() => isSubmitting = false);
-
-                        if (success) {
-                          if (ctx.mounted) Navigator.pop(ctx);
-                          _showToast("تم خصم المصروف من عهدتك بنجاح ✅", successGreen);
-                          _fetchCollectorData(); // تحديث الخزينة
-                        } else {
-                          _showToast("رصيدك لا يكفي أو حدث خطأ في الاتصال", Colors.red);
-                        }
-                      },
-                      child: isSubmitting 
-                          ? const CircularProgressIndicator(color: Colors.white) 
-                          : Text("تأكيد وخصم المصروف", style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                    ),
-                  )
-                ],
-              ),
-            );
-          }
-        );
-      }
-    );
-  }
-
-  // ==========================================
-  // 📡 دالة استلام الأموال من السائق عبر NFC
-  // ==========================================
   Future<void> _startNfcDriverCollection() async {
     if (kIsWeb) {
-      _showToast("خاصية NFC متاحة فقط في تطبيق الهاتف", Colors.orange.shade800);
+      _triggerSnackBar("خاصية NFC متاحة فقط في تطبيق الهاتف", isError: true);
       return;
     }
 
-    bool isAvailable = await NfcManager.instance.isAvailable();
-    if (!isAvailable) {
-      _showToast("حساس الـ NFC غير متوفر أو معطل!", Colors.red);
+    bool isSupported = await NfcManager.instance.isAvailable();
+    if (!isSupported) {
+      _triggerSnackBar("حساس الـ NFC غير متوفر أو معطل!", isError: true);
       return;
     }
-
-    if (!mounted) return;
 
     showModalBottomSheet(
       context: context,
@@ -365,9 +143,9 @@ class _CollectorDashboardScreenState extends State<CollectorDashboardScreen> {
             const SizedBox(height: 15),
             Text("جاهز للاستلام 💳", style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold, color: darkBlue)),
             const SizedBox(height: 10),
-            Text("يرجى تمرير بطاقة السائق خلف هاتفك لتبادل العهدة المالية بشكل آمن", style: GoogleFonts.cairo(color: Colors.grey.shade600), textAlign: TextAlign.center),
+            Text("يرجى تمرير بطاقة السائق خلف هاتفك لمعاينة العهدة", style: GoogleFonts.cairo(color: Colors.grey.shade600), textAlign: TextAlign.center),
             const SizedBox(height: 20),
-            const LinearProgressIndicator(),
+            LinearProgressIndicator(color: primaryRed, backgroundColor: primaryRed.withValues(alpha: 0.1)),
             const SizedBox(height: 15),
             TextButton(
               onPressed: () { NfcManager.instance.stopSession(); Navigator.pop(ctx); },
@@ -386,61 +164,189 @@ class _CollectorDashboardScreenState extends State<CollectorDashboardScreen> {
 
         List<int>? identifier;
         try {
-          final Map<dynamic, dynamic> rawTagData = (tag as dynamic).data as Map<dynamic, dynamic>;
-          for (var value in rawTagData.values) {
-            if (value is Map && value.containsKey('identifier')) {
-              var rawId = value['identifier'];
-              if (rawId is List) {
-                identifier = rawId.map((e) => int.parse(e.toString())).toList();
-                break;
-              }
-            }
+          final dynamic dData = tag.data;
+          List<dynamic> encodedList = dData.encode();
+          if (encodedList.length >= 2 && encodedList[1] is List) {
+            identifier = List<int>.from(encodedList[1]);
           }
-        } catch(e) {
-          debugPrint("NFC Read Error: $e");
-        }
+        } catch(e) { debugPrint("NFC Read Error: $e"); }
 
         if (identifier != null && identifier.isNotEmpty) {
           String scannedId = identifier.map((e) => e.toRadixString(16).padLeft(2, '0')).join('').toUpperCase();
-          _processDriverCollection(scannedId);
+          _previewDriverCollection(scannedId);
         } else {
-          _showToast("لم نتمكن من قراءة البطاقة.", Colors.orange.shade800);
+          _triggerSnackBar("لم نتمكن من قراءة البطاقة، حاول مجدداً.", isError: true);
         }
       }
     );
   }
 
-  Future<void> _processDriverCollection(String nfcId) async {
+  Future<void> _previewDriverCollection(String nfcId) async {
     _showLoadingOverlay();
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('auth_token') ?? '';
       
+      final response = await http.post(
+        Uri.parse('${ApiService.baseUrl}/collector/preview-driver-collection'),
+        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json; charset=utf-8'},
+        body: jsonEncode({"driver_nfc_id": nfcId}),
+      );
+
+      if (mounted && Navigator.canPop(context)) Navigator.pop(context);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        _showDriverCollectionConfirmation(data, nfcId);
+      } else {
+        final error = jsonDecode(utf8.decode(response.bodyBytes));
+        _triggerSnackBar(error['detail'] ?? "حدث خطأ", isError: true);
+      }
+    } catch (e) {
+      if (mounted && Navigator.canPop(context)) Navigator.pop(context);
+      _triggerSnackBar("انقطع الاتصال بالسيرفر", isError: true);
+    }
+  }
+
+  void _showDriverCollectionConfirmation(Map<String, dynamic> data, String nfcId) {
+    final double cash = double.tryParse(data['cash_to_collect']?.toString() ?? '0') ?? 0.0;
+    final double check = double.tryParse(data['check_to_collect']?.toString() ?? '0') ?? 0.0;
+    final String formattedCash = NumberFormat('#,##0.00').format(cash);
+    final String formattedCheck = NumberFormat('#,##0.00').format(check);
+    final int ordersCount = data['orders_count'] ?? 0;
+    final String driverName = data['driver_name']?.toString() ?? 'السائق';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+        ),
+        padding: const EdgeInsets.all(25),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(width: 50, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10))),
+            const SizedBox(height: 20),
+            Icon(Icons.account_balance_wallet_rounded, color: darkBlue, size: 45),
+            const SizedBox(height: 10),
+            Text("مراجعة العهدة المالية", style: GoogleFonts.cairo(fontSize: 20, fontWeight: FontWeight.bold, color: darkBlue)),
+            Text("الموظف: $driverName", style: GoogleFonts.cairo(fontSize: 14, color: Colors.grey.shade600)),
+            const SizedBox(height: 25),
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 5),
+                    decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.green.shade200)),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text("كاش", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: Colors.green.shade800)),
+                            const SizedBox(width: 5),
+                            Icon(Icons.payments_rounded, color: Colors.green.shade800, size: 16),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        FittedBox(fit: BoxFit.scaleDown, child: Text("$formattedCash دج", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green.shade900))),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 15),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 5),
+                    decoration: BoxDecoration(color: Colors.purple.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.purple.shade200)),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text("شيكات", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: Colors.purple.shade800)),
+                            const SizedBox(width: 5),
+                            Icon(Icons.receipt_long_rounded, color: Colors.purple.shade800, size: 16),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        FittedBox(fit: BoxFit.scaleDown, child: Text("$formattedCheck دج", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.purple.shade900))),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 15),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.blueGrey.shade50, borderRadius: BorderRadius.circular(10)),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.inventory_2_outlined, color: darkBlue, size: 18),
+                  const SizedBox(width: 8),
+                  Text("عدد الطرود المحصّلة: $ordersCount طرد", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: darkBlue)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 25),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: darkBlue, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _executeDriverCollection(nfcId);
+                },
+                icon: const Icon(Icons.check_circle_outline_rounded, color: Colors.white),
+                label: Text("تأكيد استلام العهدة", style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text("إلغاء", style: GoogleFonts.cairo(color: Colors.grey.shade600, fontWeight: FontWeight.bold)),
+            )
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _executeDriverCollection(String nfcId) async {
+    _showLoadingOverlay();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token') ?? '';
+
       final response = await http.put(
         Uri.parse('${ApiService.baseUrl}/collector/collect-from-driver'),
         headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json; charset=utf-8'},
         body: jsonEncode({"driver_nfc_id": nfcId}),
       );
 
-      if (mounted && Navigator.canPop(context)) Navigator.pop(context); // إغلاق التحميل
+      if (mounted && Navigator.canPop(context)) Navigator.pop(context);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
-        _showToast(data['message'], successGreen);
-        _fetchCollectorData(); // تحديث الواجهة
+        _triggerSnackBar(data['message']?.toString() ?? "تم");
+        _fetchCollectorData();
       } else {
         final error = jsonDecode(utf8.decode(response.bodyBytes));
-        _showToast(error['detail'] ?? "حدث خطأ", Colors.red);
+        _triggerSnackBar(error['detail']?.toString() ?? "حدث خطأ", isError: true);
       }
     } catch (e) {
       if (mounted && Navigator.canPop(context)) Navigator.pop(context);
-      _showToast("انقطع الاتصال بالسيرفر", Colors.red);
+      _triggerSnackBar("انقطع الاتصال بالسيرفر", isError: true);
     }
   }
 
-  // ==========================================
-  // 💵 دالة تحصيل ديون الزبائن
-  // ==========================================
   Future<void> _collectFromCustomer(int shipmentId, double amount, String customerName) async {
     final String formattedAmount = NumberFormat('#,##0.00').format(amount);
 
@@ -450,7 +356,7 @@ class _CollectorDashboardScreenState extends State<CollectorDashboardScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
-            Icon(Icons.monetization_on_rounded, color: successGreen),
+            Icon(Icons.monetization_on_rounded, color: Colors.green.shade800),
             const SizedBox(width: 10),
             Text("تأكيد استلام الدين", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: darkBlue, fontSize: 16)),
           ],
@@ -459,7 +365,7 @@ class _CollectorDashboardScreenState extends State<CollectorDashboardScreen> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text("إلغاء", style: GoogleFonts.cairo(color: Colors.grey, fontWeight: FontWeight.bold))),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: successGreen, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade800, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
             onPressed: () => Navigator.pop(ctx, true),
             child: Text("نعم، استلمت المبلغ", style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
@@ -482,287 +388,192 @@ class _CollectorDashboardScreenState extends State<CollectorDashboardScreen> {
       if (mounted && Navigator.canPop(context)) Navigator.pop(context);
 
       if (response.statusCode == 200) {
-        _showToast("تم تحصيل الدين بنجاح! 💸", successGreen);
+        _triggerSnackBar("تم تحصيل الدين بنجاح! 💸");
         _fetchCollectorData();
       } else {
         final error = jsonDecode(utf8.decode(response.bodyBytes));
-        _showToast(error['detail'] ?? "حدث خطأ", Colors.red);
+        _triggerSnackBar(error['detail']?.toString() ?? "حدث خطأ", isError: true);
       }
     } catch (e) {
       if (mounted && Navigator.canPop(context)) Navigator.pop(context);
-      _showToast("انقطع الاتصال بالسيرفر", Colors.red);
+      _triggerSnackBar("انقطع الاتصال بالسيرفر", isError: true);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: bgGray,
+      backgroundColor: softBg,
       appBar: AppBar(
-        title: Text("بوابة التحصيل الميداني 💼", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 18)),
-        centerTitle: true,
-        backgroundColor: darkBlue,
-        foregroundColor: Colors.white,
         elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout_rounded),
-            onPressed: () async {
-              await ApiService.logout();
-              if (mounted) Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginScreen()), (route) => false);
-            },
-          )
-        ],
+        backgroundColor: Colors.white,
+        foregroundColor: darkBlue,
+        centerTitle: true,
+        title: Text("لوحة المحصل الميداني", style: GoogleFonts.poppins(fontWeight: FontWeight.w800, color: darkBlue)),
       ),
+      drawer: const AdminDrawer(), 
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _startNfcDriverCollection,
         backgroundColor: darkBlue,
         icon: const Icon(Icons.nfc_rounded, color: Colors.white),
-        label: Text("استلام من السائقين (NFC)", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: Colors.white)),
+        label: Text("استلام عهدة سائق", style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold)),
       ),
       body: RefreshIndicator(
         onRefresh: _fetchCollectorData,
         color: primaryRed,
-        child: ListView(
-          padding: const EdgeInsets.only(bottom: 90), // مساحة للزر العائم
-          physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-          children: [
-            Container(
-              color: darkBlue,
-              padding: const EdgeInsets.only(bottom: 20),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: _buildWalletCard(),
-              ),
-            ),
-            
-            if (_isLoading) 
-              _buildShimmer()
-            else ...[
-              const SizedBox(height: 10),
-              // 🚚 قسم السائقين
-              _buildSectionTitle("أموال معلقة لدى السائقين 🚚", Colors.orange.shade800),
-              if (_drivers.isEmpty) _buildEmptyState("لا توجد أموال مع السائقين حالياً")
-              else ..._drivers.map((driver) => _buildDriverCard(driver)),
-
-              const SizedBox(height: 15),
-
-              // 👥 قسم ديون الزبائن
-              _buildSectionTitle("ديون الزبائن المكلف بها 👥", primaryRed),
-              if (_customers.isEmpty) _buildEmptyState("لم يتم تكليفك بتحصيل أي ديون")
-              else ..._customers.map((customer) => _buildCustomerCard(customer)),
-            ]
-          ],
-        ),
+        child: _isLoading 
+          ? const Center(child: CircularProgressIndicator()) 
+          : _buildMainContent(),
       ),
     );
   }
 
-  Widget _buildWalletCard() {
-    final String formattedBalance = NumberFormat('#,##0.00').format(_myBalance);
-    
-    return Container(
-      padding: const EdgeInsets.all(25),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [primaryRed, const Color(0xFF991B1B)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: primaryRed.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 8))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+  Widget _buildMainContent() {
+    final String formattedCash = NumberFormat('#,##0.00').format(_myCashBalance);
+    final String formattedCheck = NumberFormat('#,##0.00').format(_myCheckBalance);
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 90),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [darkBlue, const Color(0xFF0F172A)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [BoxShadow(color: darkBlue.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 8))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.account_balance_wallet_rounded, color: Colors.white)),
-              const SizedBox(width: 15),
-              Expanded(child: Text("مرحباً بك، $_collectorName", style: GoogleFonts.cairo(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold))),
+              Text("مرحباً، $_userName 👋", style: GoogleFonts.cairo(fontSize: 14, color: Colors.white70)),
+              Text("العهدة المالية الخاصة بك", style: GoogleFonts.cairo(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
+              const SizedBox(height: 15),
+              Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+                      child: Column(
+                        children: [
+                          Icon(Icons.payments_rounded, color: Colors.green.shade400, size: 24),
+                          const SizedBox(height: 5),
+                          Text("نقداً (كاش)", style: GoogleFonts.cairo(color: Colors.white70, fontSize: 12)),
+                          FittedBox(fit: BoxFit.scaleDown, child: Text("$formattedCash دج", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16))),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+                      child: Column(
+                        children: [
+                          Icon(Icons.receipt_long_rounded, color: Colors.purple.shade300, size: 24),
+                          const SizedBox(height: 5),
+                          Text("شيكات", style: GoogleFonts.cairo(color: Colors.white70, fontSize: 12)),
+                          FittedBox(fit: BoxFit.scaleDown, child: Text("$formattedCheck دج", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16))),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              )
             ],
           ),
-          const SizedBox(height: 20),
-          Text("العهدة الحالية (لتسليمها للإدارة):", style: GoogleFonts.cairo(color: Colors.white70, fontSize: 13)),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text("$formattedBalance دج", style: GoogleFonts.poppins(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900)),
-          ),
-          const SizedBox(height: 15),
-          
-          // 🔥 زر تسجيل المصروف المباشر المضاف حديثاً
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: primaryRed,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                padding: const EdgeInsets.symmetric(vertical: 10)
-              ),
-              onPressed: _showAddExpenseSheet,
-              icon: const Icon(Icons.receipt_long_rounded, size: 18),
-              label: Text("تسجيل وخصم مصروف 💸", style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
-            ),
-          )
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSectionTitle(String title, Color color) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      child: Text(title, style: GoogleFonts.cairo(fontSize: 15, fontWeight: FontWeight.bold, color: color)),
-    );
-  }
-
-  // بطاقة السائق (NFC Required)
-  Widget _buildDriverCard(Map<String, dynamic> driver) {
-    final amount = double.tryParse(driver['balance']?.toString() ?? '0') ?? 0.0;
-    final String formattedAmount = NumberFormat('#,##0.00').format(amount);
-    
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey.shade200), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 5)]),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        leading: CircleAvatar(backgroundColor: Colors.orange.shade50, child: Icon(Icons.local_shipping_rounded, color: Colors.orange.shade700)),
-        title: Text(driver['name'] ?? 'سائق', style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: darkBlue, fontSize: 15)),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        ),
+        
+        const SizedBox(height: 30),
+        
+        Row(
           children: [
-            Text("المبلغ المحتجز: $formattedAmount دج", style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey.shade600, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 5),
-            Row(
-              children: [
-                InkWell(
-                  onTap: () => _launchContact(driver['phone']?.toString() ?? '', isWhatsApp: false),
-                  child: Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(6)), child: Icon(Icons.call, size: 14, color: Colors.blue.shade700)),
-                ),
-                const SizedBox(width: 8),
-                InkWell(
-                  onTap: () => _launchContact(driver['phone']?.toString() ?? '', isWhatsApp: true),
-                  child: Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(6)), child: Icon(Icons.chat_bubble_rounded, size: 14, color: Colors.green.shade700)),
-                ),
-              ],
-            )
+            Icon(Icons.warning_amber_rounded, color: primaryRed, size: 24),
+            const SizedBox(width: 10),
+            Text("ديون الزبائن المطلوبة", style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold, color: darkBlue)),
           ],
         ),
-        trailing: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: darkBlue.withOpacity(0.05), borderRadius: BorderRadius.circular(12)),
-          child: Icon(Icons.nfc_rounded, color: darkBlue, size: 24),
-        ),
-        onTap: _startNfcDriverCollection, 
-      ),
-    );
-  }
+        const SizedBox(height: 10),
+        if (_customerDebts.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: cardBorder)),
+            child: Center(child: Text("لا توجد ديون زبائن مسندة إليك حالياً ✅", style: GoogleFonts.cairo(color: Colors.grey.shade500, fontWeight: FontWeight.bold))),
+          )
+        else
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _customerDebts.length,
+            itemBuilder: (ctx, i) {
+              final debt = _customerDebts[i] ?? {};
+              final double amount = double.tryParse(debt['debt_amount']?.toString() ?? '0') ?? 0.0;
+              final String fAmount = NumberFormat('#,##0.00').format(amount);
+              final String customerName = debt['customer_name']?.toString() ?? 'مجهول';
+              final String address = debt['address']?.toString() ?? '-';
 
-  // بطاقة الزبون المديون (Manual Collection)
-  Widget _buildCustomerCard(Map<String, dynamic> customer) {
-    final amount = double.tryParse(customer['debt_amount']?.toString() ?? '0') ?? 0.0;
-    final String formattedAmount = NumberFormat('#,##0.00').format(amount);
-    
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.red.shade100), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 5)]),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(backgroundColor: Colors.red.shade50, child: Icon(Icons.person_rounded, color: primaryRed)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(customer['customer_name'] ?? 'زبون', style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: darkBlue, fontSize: 15)),
-                      Text("الدين: $formattedAmount دج", style: GoogleFonts.poppins(color: primaryRed, fontWeight: FontWeight.bold, fontSize: 13)),
-                    ],
+              return Card(
+                elevation: 0, margin: const EdgeInsets.only(bottom: 10),
+                color: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: cardBorder)),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
+                  leading: CircleAvatar(backgroundColor: Colors.red.shade50, child: Icon(Icons.person, color: primaryRed)),
+                  title: Text(customerName, style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
+                  subtitle: Text(address, style: GoogleFonts.cairo(fontSize: 12)),
+                  trailing: ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade800, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                    onPressed: () => _collectFromCustomer(debt['shipment_id'], amount, customerName),
+                    child: Text("استلام $fAmount", style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
                   ),
                 ),
-                InkWell(
-                  onTap: () => _launchContact(customer['phone']?.toString() ?? '', isWhatsApp: false),
-                  child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(8)), child: Icon(Icons.call, size: 16, color: Colors.blue.shade700)),
-                ),
-                const SizedBox(width: 8),
-                InkWell(
-                  onTap: () => _launchContact(customer['phone']?.toString() ?? '', isWhatsApp: true),
-                  child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)), child: Icon(Icons.chat_bubble_rounded, size: 16, color: Colors.green.shade700)),
-                ),
-              ],
-            ),
-            const Padding(padding: EdgeInsets.symmetric(vertical: 10), child: Divider(height: 1)),
-            Row(
-              children: [
-                Icon(Icons.location_on_outlined, size: 14, color: Colors.grey.shade500),
-                const SizedBox(width: 5),
-                Expanded(child: Text(customer['address'] ?? 'غير محدد', style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey.shade600))),
-              ],
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: successGreen,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  padding: const EdgeInsets.symmetric(vertical: 10)
-                ),
-                onPressed: () => _collectFromCustomer(customer['shipment_id'], amount, customer['customer_name']),
-                icon: const Icon(Icons.monetization_on_rounded, size: 18),
-                label: Text("تأكيد استلام الدين من الزبون", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 14)),
-              ),
-            )
-          ],
-        ),
-      ),
-    );
-  }
+              );
+            },
+          ),
 
-  Widget _buildEmptyState(String msg) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 30),
-      child: Center(
-        child: Column(
+        const SizedBox(height: 30),
+
+        Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(color: Colors.grey.shade200, shape: BoxShape.circle),
-              child: Icon(Icons.check_circle_outline_rounded, size: 50, color: Colors.grey.shade400),
-            ),
-            const SizedBox(height: 15),
-            Text(msg, style: GoogleFonts.cairo(color: Colors.grey.shade600, fontWeight: FontWeight.bold, fontSize: 15)),
+            Icon(Icons.directions_car_filled_rounded, color: Colors.orange.shade800, size: 24),
+            const SizedBox(width: 10),
+            Text("سائقون يملكون عهدة", style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.bold, color: darkBlue)),
           ],
         ),
-      ),
+        const SizedBox(height: 10),
+        if (_driversWithCash.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: cardBorder)),
+            child: Center(child: Text("خزائن جميع السائقين مصفاة حالياً ✅", style: GoogleFonts.cairo(color: Colors.grey.shade500, fontWeight: FontWeight.bold))),
+          )
+        else
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _driversWithCash.length,
+            itemBuilder: (ctx, i) {
+              final driver = _driversWithCash[i] ?? {};
+              final double balance = double.tryParse(driver['balance']?.toString() ?? '0') ?? 0.0;
+              final String fBalance = NumberFormat('#,##0.00').format(balance);
+              final String driverName = driver['name']?.toString() ?? 'سائق';
+              final String phone = driver['phone']?.toString() ?? '-';
+
+              return Card(
+                elevation: 0, margin: const EdgeInsets.only(bottom: 10),
+                color: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: cardBorder)),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
+                  leading: CircleAvatar(backgroundColor: Colors.orange.shade50, child: Icon(Icons.local_shipping, color: Colors.orange.shade800)),
+                  title: Text(driverName, style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
+                  subtitle: Text("الهاتف: $phone", style: GoogleFonts.cairo(fontSize: 12)),
+                  trailing: Text("$fBalance دج", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: darkBlue, fontSize: 14)),
+                ),
+              );
+            },
+          ),
+      ],
     );
-  }
-
-  Widget _buildShimmer() {
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        children: List.generate(3, (i) => Shimmer.fromColors(
-          baseColor: Colors.grey.shade200, highlightColor: Colors.white,
-          child: Container(height: 120, margin: const EdgeInsets.only(bottom: 15), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15))),
-        )),
-      ),
-    );
-  }
-
-  void _showLoadingOverlay() {
-    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator(color: Colors.white)));
-  }
-
-  void _showToast(String msg, Color color) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, textAlign: TextAlign.center, style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: Colors.white)), 
-      backgroundColor: color, behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      margin: const EdgeInsets.all(20),
-    ));
   }
 }

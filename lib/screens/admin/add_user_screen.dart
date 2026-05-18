@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb; // 🔥 استيراد مهم جداً لفحص بيئة الويب
+import 'package:flutter/foundation.dart' show kIsWeb; 
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nfc_manager/nfc_manager.dart'; 
 import '../../services/api_service.dart';
@@ -50,7 +50,6 @@ class _AddUserScreenState extends State<AddUserScreen> {
     super.dispose();
   }
 
-  // 🚀 دالة الإرسال للسيرفر
   Future<void> _submitForm() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -58,7 +57,6 @@ class _AddUserScreenState extends State<AddUserScreen> {
 
     bool needsNfc = _selectedRole == 'driver' || _selectedRole == 'collector';
 
-    // 🔥 إرسال البيانات للسيرفر بما فيها اسم الشركة
     bool success = await ApiService.registerUser(
       username: _usernameCtrl.text.trim(),
       password: _passwordCtrl.text,
@@ -76,10 +74,18 @@ class _AddUserScreenState extends State<AddUserScreen> {
     setState(() => _isLoading = false);
 
     if (success) {
-      String roleName = _selectedRole == 'driver' ? 'السائق' : _selectedRole == 'collector' ? 'المحصل' : 'الزبون';
+      // تحديد الاسم المعروض للنجاح
+      String roleName = '';
+      switch (_selectedRole) {
+        case 'driver': roleName = 'السائق'; break;
+        case 'collector': roleName = 'المحصل'; break;
+        case 'tier2_admin': roleName = 'المدير الثانوي'; break;
+        case 'main_admin': roleName = 'المدير الرئيسي'; break;
+        default: roleName = 'الزبون';
+      }
+      
       _showSnackBar('✅ تم تسجيل $roleName بنجاح!', Colors.green.shade700);
       
-      // مسح الحقول بعد النجاح
       _formKey.currentState!.reset();
       _usernameCtrl.clear(); _passwordCtrl.clear(); _firstNameCtrl.clear();
       _lastNameCtrl.clear(); _emailCtrl.clear(); _phoneCtrl.clear();
@@ -87,7 +93,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
       _nfcCtrl.clear();
 
     } else {
-      _showSnackBar('❌ حدث خطأ! قد يكون اسم المستخدم أو البريد مستخدماً مسبقاً.', primaryRed);
+      _showSnackBar('❌ حدث خطأ! قد يكون اسم المستخدم أو البريد مستخدماً مسبقاً أو أنك لا تملك الصلاحية.', primaryRed);
     }
   }
 
@@ -106,19 +112,19 @@ class _AddUserScreenState extends State<AddUserScreen> {
   }
 
   // ==========================================
-  // 📡 دالة قراءة وربط الـ NFC
+  // 📡 دالة قراءة الـ NFC (النسخة الذهبية)
   // ==========================================
   Future<void> _startNfcScan() async {
-    // 🔥 الحماية من الويب (لأن مكتبة NFC ستسبب خطأ في المتصفح)
     if (kIsWeb) {
-      _showSnackBar("تقنية الـ NFC لا تعمل في المتصفح. يرجى إدخال الرقم يدوياً عبر قارئ USB.", primaryRed);
+      _showSnackBar("تقنية الـ NFC لا تعمل في المتصفح. يرجى إدخال الرقم يدوياً.", primaryRed);
       return;
     }
 
     try {
-      bool isAvailable = await NfcManager.instance.isAvailable();
-      if (!isAvailable) {
-        _showSnackBar("حساس الـ NFC غير متوفر أو معطل في هذا الهاتف 🚫", primaryRed);
+      // ignore: deprecated_member_use
+      bool isSupported = await NfcManager.instance.isAvailable();
+      if (!isSupported) {
+        _showSnackBar("حساس الـ NFC غير متوفر أو معطل.", primaryRed);
         return;
       }
 
@@ -138,13 +144,9 @@ class _AddUserScreenState extends State<AddUserScreen> {
                 child: Icon(Icons.contactless_rounded, size: 60, color: darkBlue),
               ),
               const SizedBox(height: 15),
-              Text("يرجى تقريب البطاقة من خلف الهاتف للربط...", 
-                style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 16), 
-                textAlign: TextAlign.center
-              ),
+              Text("يرجى تقريب البطاقة للربط...", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 16)),
               const SizedBox(height: 20),
-              LinearProgressIndicator(color: primaryRed, backgroundColor: primaryRed.withOpacity(0.1)),
-              const SizedBox(height: 15),
+              LinearProgressIndicator(color: primaryRed, backgroundColor: primaryRed.withValues(alpha: 0.1)),
               TextButton(
                 onPressed: () {
                   NfcManager.instance.stopSession();
@@ -164,33 +166,29 @@ class _AddUserScreenState extends State<AddUserScreen> {
           if (mounted && Navigator.canPop(context)) Navigator.pop(context);
 
           List<int>? identifier;
+
           try {
-            // 🔥 الحل السحري لتخطي حماية الدارت في الـ NFC
-            final Map<dynamic, dynamic> rawTagData = (tag as dynamic).data as Map<dynamic, dynamic>;
-            for (var value in rawTagData.values) {
-              if (value is Map && value.containsKey('identifier')) {
-                var rawId = value['identifier'];
-                if (rawId is List) {
-                  identifier = rawId.map((e) => int.parse(e.toString())).toList();
-                  break;
-                }
-              }
+            final dynamic dData = tag.data;
+            List<dynamic> encodedList = dData.encode();
+            
+            if (encodedList.length >= 2 && encodedList[1] is List) {
+              identifier = List<int>.from(encodedList[1]);
             }
+
           } catch(e) {
-            debugPrint("NFC Read Error: $e");
+            debugPrint("🚨 Extraction Error: $e");
           }
 
           if (identifier != null && identifier.isNotEmpty) {
             String nfcId = identifier.map((e) => e.toRadixString(16).padLeft(2, '0')).join('').toUpperCase();
-            
             if (mounted) {
               setState(() {
                 _nfcCtrl.text = nfcId;
               });
-              _showSnackBar("✅ تم قراءة البطاقة بنجاح", Colors.green.shade700);
+              _showSnackBar("✅ تمت قراءة البطاقة بنجاح", Colors.green.shade700);
             }
           } else {
-            _showSnackBar("❌ لم نتمكن من قراءة الشريحة، جرب بطاقة أخرى.", primaryRed);
+            if (mounted) _showSnackBar("❌ فشل استخراج المعرف. حاول مجدداً.", primaryRed);
           }
         }
       );
@@ -201,7 +199,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDesktop = kIsWeb; // 🔥 متغير الويب
+    final isDesktop = kIsWeb; 
 
     return Scaffold(
       backgroundColor: softBg,
@@ -210,7 +208,6 @@ class _AddUserScreenState extends State<AddUserScreen> {
         backgroundColor: Colors.white,
         foregroundColor: darkBlue,
         centerTitle: true,
-        // 🔥 إخفاء القائمة في الويب لتواجد الـ Sidebar
         leading: isDesktop ? const SizedBox.shrink() : null,
         title: Text("إضافة مستخدم جديد", style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
       ),
@@ -218,7 +215,6 @@ class _AddUserScreenState extends State<AddUserScreen> {
         child: _isLoading
             ? Center(child: CircularProgressIndicator(color: primaryRed))
             : Center(
-                // 🔥 تحديد عرض النموذج لكي لا يتمدد بشكل قبيح في شاشات الحاسوب
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 800),
                   child: SingleChildScrollView(
@@ -230,7 +226,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _buildSectionTitle("نوع الحساب والصلاحيات"),
-                          _buildRoleSelector(),
+                          _buildRoleSelector(), // 🔥 تم تحديث هذه الدالة بالأسفل
                           const SizedBox(height: 25),
                           
                           _buildSectionTitle("البيانات الشخصية"),
@@ -239,7 +235,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(16),
-                              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))],
+                              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10, offset: const Offset(0, 4))],
                             ),
                             child: Column(
                               children: [
@@ -288,7 +284,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(16),
-                              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))],
+                              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10, offset: const Offset(0, 4))],
                             ),
                             child: Column(
                               children: [
@@ -315,7 +311,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
                                           borderRadius: BorderRadius.circular(16),
                                           border: Border.all(color: Colors.blue.shade200, width: 1.5),
                                         ),
-                                        child: _buildNfcField(isDesktop), // 🔥 نمرر متغير الويب هنا
+                                        child: _buildNfcField(isDesktop), 
                                       ),
                                     ],
                                   )
@@ -357,6 +353,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
     );
   }
 
+  // 🔥 إضافة الأدوار الإدارية الجديدة
   Widget _buildRoleSelector() {
     return Column(
       children: [
@@ -370,7 +367,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
                 color: Colors.blue.shade700,
               ),
             ),
-            const SizedBox(width: 15),
+            const SizedBox(width: 10),
             Expanded(
               child: _buildRoleCard(
                 title: 'سائق توصيل',
@@ -379,11 +376,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
                 color: Colors.orange.shade800,
               ),
             ),
-          ],
-        ),
-        const SizedBox(height: 15),
-        Row(
-          children: [
+            const SizedBox(width: 10),
             Expanded(
               child: _buildRoleCard(
                 title: 'محصل ميداني',
@@ -392,9 +385,28 @@ class _AddUserScreenState extends State<AddUserScreen> {
                 color: Colors.teal.shade700,
               ),
             ),
-            const SizedBox(width: 15),
+          ],
+        ),
+        const SizedBox(height: 15),
+        // 🔥 سطر الإدارة الجديد
+        Row(
+          children: [
             Expanded(
-              child: Container(), 
+              child: _buildRoleCard(
+                title: 'مدير ثانوي',
+                icon: Icons.admin_panel_settings_outlined,
+                value: 'tier2_admin',
+                color: Colors.indigo.shade600,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildRoleCard(
+                title: 'مدير رئيسي',
+                icon: Icons.admin_panel_settings_rounded,
+                value: 'main_admin',
+                color: Colors.red.shade800,
+              ),
             ),
           ],
         )
@@ -407,7 +419,6 @@ class _AddUserScreenState extends State<AddUserScreen> {
     return GestureDetector(
       onTap: () => setState(() {
         _selectedRole = value;
-        // تصفير الحقول المخصصة عند تغيير الدور
         if (value != 'customer') {
           _phone2Ctrl.clear();
           _phone3Ctrl.clear();
@@ -419,28 +430,30 @@ class _AddUserScreenState extends State<AddUserScreen> {
       }),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 16),
+        padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.1) : Colors.white,
+          color: isSelected ? color.withValues(alpha: 0.1) : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: isSelected ? color : Colors.grey.shade300, width: isSelected ? 2 : 1),
         ),
         child: Column(
           children: [
-            Icon(icon, color: isSelected ? color : Colors.grey.shade500, size: 32),
-            const SizedBox(height: 8),
-            Text(title, style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: isSelected ? color : Colors.grey.shade700)),
+            Icon(icon, color: isSelected ? color : Colors.grey.shade500, size: 28),
+            const SizedBox(height: 4),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(title, style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13, color: isSelected ? color : Colors.grey.shade700))
+            ),
           ],
         ),
       ),
     );
   }
 
-  // 🔥 دالة حقل الـ NFC المحدثة للويب
   Widget _buildNfcField(bool isDesktop) {
     return TextFormField(
       controller: _nfcCtrl,
-      readOnly: !isDesktop, // في الويب يمكنه الكتابة، في الجوال للقراءة فقط عبر المسح
+      readOnly: !isDesktop, 
       style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold, color: darkBlue),
       decoration: InputDecoration(
         labelText: isDesktop ? 'رقم بطاقة NFC (ادخال يدوي أو قارئ USB)' : 'رقم بطاقة NFC (إجباري للميدانيين)',
@@ -448,7 +461,6 @@ class _AddUserScreenState extends State<AddUserScreen> {
         filled: true,
         fillColor: Colors.blue.shade50,
         prefixIcon: const Icon(Icons.nfc_rounded, color: Colors.blue, size: 20),
-        // 🔥 إخفاء زر المسح في الويب
         suffixIcon: isDesktop ? null : Padding(
           padding: const EdgeInsets.all(6.0),
           child: ElevatedButton.icon(

@@ -1,170 +1,230 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-
-// 🔥 استخدام المسارات النسبية (Relative Paths) بالكامل لمنع تعارض الاستيراد
+import 'package:intl/intl.dart';
 import '../../services/api_service.dart';
-import '../../screens/shared/login_screen.dart';
+import '../../widgets/admin/shipment_journey_timeline.dart';
 
-import '../../screens/admin/user_management_screen.dart';
-import '../../screens/admin/sales_management_screen.dart';
-import '../../screens/admin/logistics_management_screen.dart';
-import '../../screens/admin/customer_orders_review_screen.dart';
-import '../../screens/finance/invoices_screen.dart'; 
-import '../../screens/admin/customer_prices_screen.dart';
-import '../../screens/admin/admin_fleet_screen.dart';
-import '../../screens/admin/admin_b2b_pricing_screen.dart'; 
-import '../../screens/finance/financial_settlement_screen.dart'; 
-import '../../screens/admin/admin_expense_review_screen.dart';
-import '../../screens/admin/add_user_screen.dart';
-import '../../screens/admin/master_tracking_screen.dart';
-import '../../screens/admin/agenda_screen.dart';
-import '../../screens/admin/daily_manifest_screen.dart';
+class AdminArchiveScreen extends StatefulWidget {
+  const AdminArchiveScreen({super.key});
 
-class AdminDrawer extends StatelessWidget {
-  const AdminDrawer({super.key});
+  @override
+  State<AdminArchiveScreen> createState() => _AdminArchiveScreenState();
+}
 
-  final Color primaryRed = const Color(0xFFD32F2F);
-  final Color darkRed = const Color(0xFFB71C1C);
+class _AdminArchiveScreenState extends State<AdminArchiveScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  List<dynamic> _searchResults = [];
+  bool _isLoading = false;
+  bool _hasSearched = false;
 
-  void _nav(BuildContext context, Widget screen) {
-    Navigator.pop(context); // إغلاق القائمة الجانبية أولاً
-    Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+  Future<void> _performSearch() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+
+    setState(() {
+      _isLoading = true;
+      _hasSearched = true;
+    });
+
+    try {
+      final results = await ApiService.searchAllOrders(query);
+      if (mounted) {
+        setState(() {
+          _searchResults = results;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _searchResults = [];
+        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("حدث خطأ أثناء البحث", style: GoogleFonts.cairo()), backgroundColor: Colors.red));
+      }
+    }
   }
 
-  Widget _buildDrawerItem(BuildContext context, IconData icon, String title, Widget targetScreen, {Color? iconColor}) {
-    return ListTile(
-      leading: Icon(icon, color: iconColor ?? Colors.blueGrey.shade700),
-      title: Text(title, style: GoogleFonts.cairo(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blueGrey.shade900)),
-      dense: true, 
-      onTap: () => _nav(context, targetScreen),
-    );
-  }
-
-  Widget _buildDrawerSectionTitle(String title) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 15, 16, 5), 
-      child: Text(title, style: GoogleFonts.cairo(fontSize: 12, fontWeight: FontWeight.bold, color: primaryRed))
+  void _showJourneySheet(Map<String, dynamic> order) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => FractionallySizedBox(
+        heightFactor: 0.85,
+        child: ShipmentJourneyTimeline(order: order),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Drawer(
-      child: Container(
-        color: Colors.white,
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            UserAccountsDrawerHeader(
-              decoration: BoxDecoration(gradient: LinearGradient(colors: [primaryRed, darkRed], begin: Alignment.topLeft, end: Alignment.bottomRight)),
-              accountName: Text("إدارة النظام (Admin)", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 18)),
-              accountEmail: Text("admin@dantecloud.local", style: GoogleFonts.cairo(fontSize: 12)),
-              currentAccountPicture: Container(
-                decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)), 
-                child: CircleAvatar(backgroundColor: primaryRed.withValues(alpha: 0.1), child: Icon(Icons.shield_rounded, size: 40, color: primaryRed))
-              ),
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
+      appBar: AppBar(
+        title: Text("أرشيف الطلبيات الشامل", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, color: const Color(0xFF1E293B))),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        centerTitle: true,
+        iconTheme: const IconThemeData(color: Color(0xFF1E293B)),
+      ),
+      body: Column(
+        children: [
+          // 🔍 حقل البحث
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 5))],
             ),
-            
-            // ================== الفرع الأول: العمليات واللوجستيات ==================
-            _buildDrawerSectionTitle("العمليات واللوجستيات الميدانية"),
-            
-            Container(
-              color: Colors.amber.shade50.withValues(alpha: 0.5),
-              child: _buildDrawerItem(
-                context,
-                Icons.history_edu_rounded, 
-                "المراقبة الشاملة للتوجيه 📜", 
-                const MasterTrackingScreen(),
-                iconColor: Colors.orange.shade900
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    onSubmitted: (_) => _performSearch(),
+                    decoration: InputDecoration(
+                      hintText: "ابحث برقم التتبع، الاسم، أو الهاتف...",
+                      hintStyle: GoogleFonts.cairo(fontSize: 14),
+                      prefixIcon: const Icon(Icons.search, color: Colors.blue),
+                      filled: true,
+                      fillColor: Colors.blue.shade50,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton(
+                  onPressed: _performSearch,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade700, padding: const EdgeInsets.all(14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  child: const Icon(Icons.manage_search_rounded, color: Colors.white),
+                )
+              ],
             ),
-            _buildDrawerItem(context, Icons.dashboard_customize_rounded, "غرفة اللوجستيات والتجهيز", const LogisticsManagementScreen()),
-            
-            // 🔥 ربط الأجندة الجديدة هنا بألوان مميزة
-            Container(
-              color: Colors.purple.shade50.withValues(alpha: 0.5),
-              child: _buildDrawerItem(
-                context, 
-                Icons.edit_calendar_rounded, 
-                "المفكرة اللوجستية (Agenda) 📅", 
-                const AgendaScreen(),
-                iconColor: Colors.purple.shade700
-              ),
-            ),
-            
-            // 🔥 إعادة إضافة شاشة التجهيز والطباعة باسم جديد
-            _buildDrawerItem(
-              context, 
-              Icons.assignment_turned_in_rounded, 
-              "تجهيز شحنات اليوم (PDF) 🚛", 
-              const DailyManifestScreen(),
-              iconColor: Colors.brown.shade700
-            ),
-            
-            _buildDrawerItem(context, Icons.fact_check_rounded, "مراجعة طلبات الزبائن", const CustomerOrdersReviewScreen()),
-            const Divider(),
-
-            // ================== الفرع الثاني: الأسطول والمالية ==================
-            _buildDrawerSectionTitle("الأسطول والمحاسبة المالية"),
-            
-            _buildDrawerItem(context, Icons.airport_shuttle_rounded, "مراقبة الأسطول (الرادار)", const AdminFleetScreen()),
-            _buildDrawerItem(context, Icons.attach_money_rounded, "تصفية الخزينة (NFC)", const FinancialSettlementScreen(), iconColor: Colors.teal.shade700),
-            
-            Container(
-              color: Colors.green.shade50.withValues(alpha: 0.5),
-              child: _buildDrawerItem(
-                context,
-                Icons.price_check_rounded, 
-                "مراجعة مصاريف السائقين 💸", 
-                const AdminExpenseReviewScreen(),
-                iconColor: Colors.green.shade800
-              ),
-            ),
-            _buildDrawerItem(context, Icons.receipt_long_rounded, "سجل الفواتير والمبيعات", const InvoicesScreen()),
-            const Divider(),
-
-            // ================== الفرع الثالث: إدارة الشركات ==================
-            _buildDrawerSectionTitle("عملاء B2B والتسعير"),
-            
-            _buildDrawerItem(context, Icons.inventory_2_rounded, "إدارة المنتجات (المخزن)", const SalesManagementScreen()),
-            Container(
-              color: Colors.blue.shade50.withValues(alpha: 0.5),
-              child: _buildDrawerItem(
-                context,
-                Icons.handshake_rounded, 
-                "تسعير الشركات (B2B) 🏢", 
-                const AdminB2BPricingScreen(),
-                iconColor: Colors.blue.shade800
-              ),
-            ),
-            _buildDrawerItem(context, Icons.local_offer_rounded, "عروض الأسعار الخاصة", const CustomerPricesScreen()),
-            const Divider(),
-
-            // ================== الفرع الرابع: إدارة النظام ==================
-            _buildDrawerSectionTitle("إدارة النظام والمستخدمين"),
-            _buildDrawerItem(context, Icons.group_rounded, "قائمة المستخدمين", const UserManagementScreen()),
-            
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(10)),
-              child: _buildDrawerItem(context, Icons.person_add_alt_1_rounded, "إضافة مستخدم جديد 👤", const AddUserScreen(), iconColor: Colors.blue.shade800),
-            ),
-            const Divider(),
-
-            // ================== تسجيل الخروج ==================
-            ListTile(
-              leading: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.logout_rounded, color: Colors.red)),
-              title: Text("تسجيل الخروج", style: GoogleFonts.cairo(color: Colors.red, fontWeight: FontWeight.bold)),
-              onTap: () async { 
-                await ApiService.logout(); 
-                if (context.mounted) {
-                  Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (context) => const LoginScreen()), (route) => false); 
-                }
-              },
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
+          ),
+          
+          // 📋 نتائج البحث
+          Expanded(
+            child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : (!_hasSearched)
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.library_books_rounded, size: 80, color: Colors.grey.shade300),
+                          const SizedBox(height: 15),
+                          Text("ابحث في سجل جميع الطلبيات المؤرشفة", style: GoogleFonts.cairo(fontSize: 16, color: Colors.grey, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    )
+                  : _searchResults.isEmpty
+                      ? Center(child: Text("لا توجد نتائج مطابقة لبحثك", style: GoogleFonts.cairo(fontSize: 16, color: Colors.red.shade400, fontWeight: FontWeight.bold)))
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(15),
+                          itemCount: _searchResults.length,
+                          itemBuilder: (context, index) {
+                            final order = _searchResults[index];
+                            
+                            // 🔥 تأمين الحسابات والنصوص ضد الـ null
+                            final String customerName = order['customer_name'] ?? 'زبون غير معروف';
+                            final String trackingNum = order['tracking_number']?.toString() ?? '-';
+                            final String orderStatus = order['delivery_status']?.toString().toUpperCase() ?? 'PENDING';
+                            
+                            final double amount = double.tryParse(order['cash_amount']?.toString() ?? '0') ?? 0.0;
+                            final double settledCash = double.tryParse(order['settled_cash_amount']?.toString() ?? '0') ?? 0.0;
+                            final double settledCheck = double.tryParse(order['settled_check_amount']?.toString() ?? '0') ?? 0.0;
+                            final double remaining = double.tryParse(order['remaining_amount']?.toString() ?? '0') ?? 0.0;
+                            
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                              elevation: 2,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(15),
+                                onTap: () => _showJourneySheet(order),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      CircleAvatar(backgroundColor: Colors.blue.shade50, child: Icon(Icons.archive_rounded, color: Colors.blue.shade800)),
+                                      const SizedBox(width: 15),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(customerName, style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 15, color: const Color(0xFF1E293B))),
+                                            const SizedBox(height: 4),
+                                            Text("تتبع: $trackingNum", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
+                                            const SizedBox(height: 6),
+                                            
+                                            // تفاصيل الدفع
+                                            Container(
+                                              padding: const EdgeInsets.all(8),
+                                              decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade200)),
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Row(
+                                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                    children: [
+                                                      Text("الإجمالي:", style: GoogleFonts.cairo(fontSize: 11, color: Colors.grey.shade700)),
+                                                      Text("${NumberFormat('#,##0.00').format(amount)} دج", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold)),
+                                                    ],
+                                                  ),
+                                                  if (settledCash > 0 || settledCheck > 0)
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(top: 4.0),
+                                                      child: Row(
+                                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                        children: [
+                                                          Text("المدفوع:", style: GoogleFonts.cairo(fontSize: 11, color: Colors.green.shade700)),
+                                                          Text("كاش(${NumberFormat('#,##0').format(settledCash)}) | شيك(${NumberFormat('#,##0').format(settledCheck)})", style: GoogleFonts.cairo(fontSize: 10, color: Colors.green.shade800, fontWeight: FontWeight.bold)),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  if (remaining > 0)
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(top: 4.0),
+                                                      child: Row(
+                                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                        children: [
+                                                          Text("المتبقي دين:", style: GoogleFonts.cairo(fontSize: 11, color: Colors.red.shade700)),
+                                                          Text("${NumberFormat('#,##0.00').format(remaining)} دج", style: GoogleFonts.poppins(fontSize: 12, color: Colors.red.shade700, fontWeight: FontWeight.bold)),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                ],
+                                              ),
+                                            )
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(color: orderStatus.contains('SETTLED') ? Colors.teal.shade50 : Colors.blue.shade50, borderRadius: BorderRadius.circular(6)),
+                                            child: Text(orderStatus, style: GoogleFonts.poppins(fontSize: 9, fontWeight: FontWeight.bold, color: orderStatus.contains('SETTLED') ? Colors.teal.shade800 : Colors.blue.shade800)),
+                                          ),
+                                          const SizedBox(height: 20),
+                                          const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.grey),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+          ),
+        ],
       ),
     );
   }

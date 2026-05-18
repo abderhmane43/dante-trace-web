@@ -32,7 +32,7 @@ class _NfcHandshakeScreenState extends State<NfcHandshakeScreen> {
   }
 
   // =========================================================================
-  // 📡 محرك قراءة الـ NFC (المحرك الآمن والموحد)
+  // 📡 محرك قراءة الـ NFC (محرك الـ Regex القاضي والموحد 🔥)
   // =========================================================================
   void _startDriverNfcScan() async {
     // 🔥 الحماية من الويب
@@ -49,6 +49,7 @@ class _NfcHandshakeScreenState extends State<NfcHandshakeScreen> {
       return;
     }
 
+    // ignore: deprecated_member_use
     bool isAvailable = await NfcManager.instance.isAvailable();
     if (!isAvailable) {
       if (mounted) {
@@ -75,30 +76,30 @@ class _NfcHandshakeScreenState extends State<NfcHandshakeScreen> {
         // إيقاف الجلسة فوراً بمجرد التقاط البطاقة لمنع التكرار
         NfcManager.instance.stopSession();
         
-        List<int>? identifier;
+        String? finalNfcId;
 
         try {
-          // 🛡️ التفكيك الآمن للبيانات (The Ultimate Safe Parser)
-          final Map<dynamic, dynamic> rawTagData = (tag as dynamic).data as Map<dynamic, dynamic>;
-          for (var value in rawTagData.values) {
-            if (value is Map && value.containsKey('identifier')) {
-              var rawId = value['identifier'];
-              if (rawId is List) {
-                identifier = rawId.map((e) => int.parse(e.toString())).toList();
-                break;
-              }
-            }
+          // 🔥 الضربة القاضية: تحويل بيانات الشريحة بالكامل إلى نص عادي واصطياد الرقم
+          String rawDataString = tag.data.toString();
+          debugPrint("🚨 RAW NFC STRING (HANDSHAKE): $rawDataString");
+
+          RegExp regExp = RegExp(r'identifier:\s*\[([^\]]+)\]');
+          Match? match = regExp.firstMatch(rawDataString);
+
+          if (match != null) {
+            String numbersStr = match.group(1)!; 
+            List<int> bytes = numbersStr.split(',').map((e) => int.parse(e.trim())).toList();
+            finalNfcId = bytes.map((e) => e.toRadixString(16).padLeft(2, '0')).join('').toUpperCase();
           }
         } catch(e) {
-          debugPrint("🚨 خطأ أثناء تحليل NFC: $e");
+          debugPrint("🚨 Regex NFC Error (HANDSHAKE): $e");
         }
 
         if (mounted) {
           setState(() {
             _isScanning = false;
-            if (identifier != null && identifier.isNotEmpty) {
-              // تحويل المعرف إلى Hex String بشكل نظيف
-              _driverNfcId = identifier.map((b) => b.toRadixString(16).padLeft(2, '0')).join('').toUpperCase();
+            if (finalNfcId != null && finalNfcId.isNotEmpty) {
+              _driverNfcId = finalNfcId;
               _scanMessage = "✅ تم التقاط بطاقة السائق بنجاح";
             } else {
               _driverNfcId = null;
@@ -253,14 +254,16 @@ class _NfcHandshakeScreenState extends State<NfcHandshakeScreen> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(24),
-              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 25, offset: const Offset(0, 10))],
+              // ignore: deprecated_member_use
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 25, offset: const Offset(0, 10))],
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
                   padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(color: widget.themeColor.withValues(alpha: 0.1), shape: BoxShape.circle),
+                  // ignore: deprecated_member_use
+                  decoration: BoxDecoration(color: widget.themeColor.withOpacity(0.1), shape: BoxShape.circle),
                   child: Icon(contextData['icon'], size: 50, color: widget.themeColor),
                 ),
                 const SizedBox(height: 20),

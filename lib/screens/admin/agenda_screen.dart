@@ -103,7 +103,9 @@ class _AgendaScreenState extends State<AgendaScreen> {
     return _ordersByDay[dayOnly] ?? [];
   }
 
-  // 💬 دالة فتح الواتساب
+  // =========================================================================
+  // 📱 دوال الواتساب والنافذة الذكية المدمجة
+  // =========================================================================
   Future<void> _launchWhatsApp(String phone, String message) async {
     String cleanPhone = phone.replaceAll(RegExp(r'\D'), ''); 
     if (cleanPhone.startsWith('0')) {
@@ -128,6 +130,178 @@ class _AgendaScreenState extends State<AgendaScreen> {
       _showSnackBar("تعذر فتح واتساب.", Colors.red);
     }
   }
+
+  // 🔥 النافذة الذكية التي تظهر بعد الإسناد
+  void _showAssignmentWhatsAppDialog(BuildContext context, Map<String, dynamic> order, Map<String, dynamic> driver) {
+    List<dynamic> items = [];
+    if (order['items'] is String) {
+      try { items = jsonDecode(order['items']); } catch(e) { items = []; }
+    } else if (order['items'] is List) {
+      items = order['items'];
+    }
+
+    String itemsText = items.map((i) {
+      String name = i['name'] ?? 'قطعة';
+      int qty = int.tryParse(i['qty']?.toString() ?? '1') ?? 1;
+      double price = double.tryParse(i['price']?.toString() ?? '0') ?? 0.0;
+      return "  ▪️ $qty x $name (${price} دج)";
+    }).join("\n");
+
+    String scheduledDate = order['scheduled_date'] != null 
+        ? DateFormat('yyyy-MM-dd HH:mm').format(DateTime.parse(order['scheduled_date'])) 
+        : "أقرب وقت ممكن";
+    
+    final double amount = double.tryParse(order['cash_amount']?.toString() ?? '0') ?? 0.0;
+    final String formattedAmount = NumberFormat('#,##0.00').format(amount);
+
+    String driverName = driver['first_name'] ?? driver['username'] ?? 'الطيب';
+    String customerName = order['customer_name'] ?? 'الزبون';
+
+    String driverMsg = '''مرحباً $driverName، تم إسناد طلبية الزبون *$customerName* لك بنجاح. يرجى البدء في عملية التوصيل فوراً 🚚.
+
+📌 الدفعة : ${order['tracking_number']}
+📦 المنتجات:
+$itemsText
+💰 المبلغ الإجمالي: $formattedAmount دج
+⏰ موعد الاستلام: $scheduledDate
+
+📞 رقم الزبون للاتصال: ${order['customer_phone']}
+📍 عنوان التوصيل: ${order['customer_wilaya'] ?? ''} - ${order['customer_address']}''';
+
+    String customerMsg = '''مرحباً $customerName 👋،
+تم خروج طلبيتك رقم (${order['tracking_number']}) للتوصيل وهي في طريقها إليك! 🚚
+
+📦 المنتجات:
+$itemsText
+💰 المبلغ الإجمالي المطلوب: $formattedAmount دج
+⏰ الموعد المتوقع: $scheduledDate
+
+👨‍✈️ السائق الموكل: $driverName
+📞 رقم هاتف السائق للتواصل: ${driver['phone'] ?? 'غير متوفر'}''';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Column(
+          children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.green, size: 50),
+            const SizedBox(height: 10),
+            Text("تم الإسناد بنجاح! 🎉", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.green.shade800)),
+          ],
+        ),
+        content: Text("لمن تريد إرسال تفاصيل الطلبية عبر الواتساب؟", textAlign: TextAlign.center, style: GoogleFonts.cairo(fontSize: 14)),
+        actionsAlignment: MainAxisAlignment.center,
+        actionsOverflowDirection: VerticalDirection.down,
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+              icon: const Icon(Icons.send_rounded),
+              label: Text("إرسال التفاصيل للسائق", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 14)),
+              onPressed: () {
+                 if (driver['phone'] != null) {
+                   _launchWhatsApp(driver['phone'].toString(), driverMsg);
+                 } else {
+                   _showSnackBar("رقم السائق غير مسجل!", Colors.red);
+                 }
+              },
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade700, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+              icon: const Icon(Icons.send_rounded),
+              label: Text("إرسال التفاصيل للزبون", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 14)),
+              onPressed: () {
+                 if (order['customer_phone'] != null) {
+                   _launchWhatsApp(order['customer_phone'].toString(), customerMsg);
+                 }
+              },
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text("إغلاق", style: GoogleFonts.cairo(color: Colors.grey.shade700, fontWeight: FontWeight.bold)),
+          )
+        ],
+      ),
+    );
+  }
+
+  // =========================================================================
+  // 📅 دالة إعادة الجدولة وتغيير موعد الزبون (Reschedule)
+  // =========================================================================
+  void _showRescheduleDialog(Map<String, dynamic> order) async {
+    DateTime initialDate = DateTime.now();
+    if (order['scheduled_date'] != null) {
+      initialDate = DateTime.parse(order['scheduled_date']).toLocal();
+    }
+
+    final DateTime? pickedDate = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime.now().subtract(const Duration(days: 30)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: (context, child) => Theme(
+        data: ThemeData.light().copyWith(
+          colorScheme: ColorScheme.light(primary: darkBlue, onPrimary: Colors.white),
+        ),
+        child: child!,
+      ),
+    );
+
+    if (pickedDate != null && mounted) {
+      final TimeOfDay? pickedTime = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.fromDateTime(initialDate),
+      );
+
+      if (pickedTime != null && mounted) {
+        final DateTime finalDateTime = DateTime(
+          pickedDate.year, pickedDate.month, pickedDate.day,
+          pickedTime.hour, pickedTime.minute,
+        );
+
+        // إظهار مؤشر التحميل
+        showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
+
+        try {
+          // جلب التوكن
+          final prefs = await SharedPreferences.getInstance();
+          final token = prefs.getString('auth_token') ?? '';
+
+          // إرسال الطلب للسيرفر
+          final response = await http.put(
+            Uri.parse('${ApiService.baseUrl}/admin/shipments/${order['id']}/reschedule'),
+            headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'new_date': finalDateTime.toIso8601String(),
+              'require_approval': false // false تعني جدولة إجبارية مباشرة بدون انتظار موافقة الزبون
+            }),
+          );
+
+          Navigator.pop(context); // إغلاق التحميل
+
+          if (response.statusCode == 200) {
+            _showSnackBar("✅ تم تغيير الموعد بنجاح", Colors.green);
+            _fetchData(); // تحديث الأجندة
+          } else {
+            _showSnackBar("❌ فشل تغيير الموعد", Colors.red);
+          }
+        } catch (e) {
+          Navigator.pop(context);
+          _showSnackBar("❌ خطأ في الاتصال بالخادم", Colors.red);
+        }
+      }
+    }
+  }
+
 
   void _showSnackBar(String msg, Color color) {
     if (!mounted) return;
@@ -168,12 +342,15 @@ class _AgendaScreenState extends State<AgendaScreen> {
   }
 
   // =========================================================================
-  // 🚚 الإسناد المباشر للسائق من التقويم مع إرسال الواتساب
+  // 🚚 الإسناد المباشر للسائق من التقويم 
   // =========================================================================
-  void _showAssignBottomSheet(int shipmentId, String customerName) {
+  void _showAssignBottomSheet(Map<String, dynamic> order) {
     int? selectedDriverId;
     bool isAssigning = false;
     bool bypassNfc = true; 
+    
+    int shipmentId = order['id'];
+    String customerName = order['customer_name'];
 
     showModalBottomSheet(
       context: context,
@@ -251,23 +428,12 @@ class _AgendaScreenState extends State<AgendaScreen> {
                           await ApiService.updateOrderStatus(shipmentId, 'assigned');
                         }
                         
-                        // 🔥 جلب بيانات السائق وإرسال رسالة واتساب
-                        final selectedDriver = _availableDrivers.firstWhere((d) => d['id'] == selectedDriverId);
-                        String driverPhone = selectedDriver['phone'] ?? "";
-                        String driverName = selectedDriver['first_name'] ?? selectedDriver['username'];
-                        
-                        if (driverPhone.isNotEmpty) {
-                          String driverMsg = bypassNfc 
-                            ? "مرحباً $driverName، تم إسناد طلبية الزبون *$customerName* لك بنجاح. يرجى البدء في عملية التوصيل فوراً 🚚."
-                            : "مرحباً $driverName، تم تعيينك لتوصيل طلبية الزبون *$customerName*. يرجى الالتحاق بالمخزن لتأكيد الاستلام عبر NFC للبدء 📦.";
-                          
-                          await _launchWhatsApp(driverPhone, driverMsg);
-                        }
-
                         if (!mounted) return;
                         if (Navigator.canPop(ctx)) Navigator.pop(ctx); 
                         
-                        _showSnackBar(bypassNfc ? "تم الإسناد وتخطي الـ NFC بنجاح 🚀" : "تم إرسال أمر التحاق للسائق 🚚", Colors.green.shade700);
+                        // 🔥 جلب بيانات السائق وإظهار نافذة الواتساب بدلاً من الرسالة العادية
+                        final selectedDriver = _availableDrivers.firstWhere((d) => d['id'] == selectedDriverId);
+                        _showAssignmentWhatsAppDialog(context, order, selectedDriver);
                         
                         _fetchData(); 
                       } else {
@@ -588,24 +754,33 @@ class _AgendaScreenState extends State<AgendaScreen> {
                               )
                             : Row(
                                 children: [
-                                  // 🔥 زر الطباعة الفردي
+                                  // 🔥 زر طباعة المخزن
                                   IconButton(
                                     onPressed: () => _printPickingList(order['id']), 
                                     icon: const Icon(Icons.print_rounded, color: Colors.blueGrey),
                                     tooltip: "طباعة للمخزن",
                                   ),
+                                  // 🔥 زر إعادة الجدولة (تغيير الموعد)
+                                  IconButton(
+                                    onPressed: isPendingApproval ? null : () => _showRescheduleDialog(order),
+                                    icon: Icon(Icons.edit_calendar_rounded, color: isPendingApproval ? Colors.grey : Colors.orange.shade700),
+                                    tooltip: "تغيير الموعد",
+                                  ),
+                                  const SizedBox(width: 4),
+                                  // 🔥 زر الإسناد للسائق
                                   ElevatedButton.icon(
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: isPendingApproval ? Colors.grey.shade400 : primaryRed,
                                       foregroundColor: Colors.white,
                                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                                       elevation: 0,
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)
                                     ),
                                     onPressed: isPendingApproval 
                                         ? null 
-                                        : () => _showAssignBottomSheet(order['id'], order['customer_name']),
-                                    icon: const Icon(Icons.outbox_rounded, size: 18),
-                                    label: Text("إسناد 🚚", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 13)),
+                                        : () => _showAssignBottomSheet(order), // مررنا الطلبية كاملة هنا
+                                    icon: const Icon(Icons.outbox_rounded, size: 16),
+                                    label: Text("إسناد 🚚", style: GoogleFonts.cairo(fontWeight: FontWeight.bold, fontSize: 12)),
                                   ),
                                 ],
                               )
